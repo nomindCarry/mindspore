@@ -16,6 +16,7 @@
 #ifndef MINDSPORE_CCSRC_BACKEND_SESSION_SESSION_BASIC_H
 #define MINDSPORE_CCSRC_BACKEND_SESSION_SESSION_BASIC_H
 
+#include <utility>
 #include <vector>
 #include <string>
 #include <utility>
@@ -58,7 +59,6 @@ using AnyList = std::vector<Any>;
 using AnyListPtr = std::shared_ptr<AnyList>;
 
 struct BackendOpRunInfo {
-  BackendOpRunInfo() = default;
   ~BackendOpRunInfo() = default;
   BackendOpRunInfo(pynative::BaseOpRunInfo base_op_run_info, Primitive *prim, bool is_infer, bool is_gradient_out)
       : base_op_run_info(std::move(base_op_run_info)),

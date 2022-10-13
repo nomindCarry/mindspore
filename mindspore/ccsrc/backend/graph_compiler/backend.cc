@@ -461,6 +461,17 @@ void RunControlOperator(const std::shared_ptr<GraphCompiler> &graph_compiler, co
     }
   }
 }
+void UpdateOutputAbstract(const KernelGraphPtr &kernel_graph, const session::BackendOpRunInfoPtr &op_run_info) {
+  MS_EXCEPTION_IF_NULL(kernel_graph);
+  MS_EXCEPTION_IF_NULL(op_run_info);
+  const auto &kernels = kernel_graph->execution_order();
+  for (const auto &kernel : kernels) {
+    MS_EXCEPTION_IF_NULL(kernel);
+    if (common::AnfAlgo::GetCNodeName(kernel) == op_run_info->base_op_run_info.op_name) {
+      op_run_info->base_op_run_info.abstract = kernel->abstract();
+    }
+  }
+}
 
 TensorPtr CreateOutputTensor(const AnfNodePtr &output_node, size_t output_index) {
   MS_EXCEPTION_IF_NULL(output_node);
@@ -706,9 +717,6 @@ void MindRTBackend::OpRunCallback(const std::shared_ptr<runtime::OpTaskContext> 
   auto infer_flag = ms_context->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_INFER);
   ms_context->set_param<bool>(MS_CTX_ENABLE_PYNATIVE_INFER, context->is_pynative_infer());
 
-  // Set graph input to real abstract
-  pynative::OpCompiler::GetInstance().SetGraphInputNodeToActualAbstract(context->op_run_info(), context->graph());
-
   runtime::RunSingleOpGraph(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
                             context->device_context());
   if (!context->op_run_info()->is_infer) {
@@ -815,9 +823,7 @@ void MindRTBackend::RunOpImpl(bool single_op_cache_hit, const OpCompilerInfoPtr 
 
   auto device_context = op_compiler_info->device_context_;
   auto &op_executor = runtime::OpExecutor::GetInstance();
-  bool is_dynamic_shape =
-    op_run_info->base_op_run_info.has_dynamic_output || op_run_info->base_op_run_info.has_dynamic_input;
-
+  bool is_dynamic_shape = op_run_info->base_op_run_info.has_dynamic_output;
   bool async_exec_disabled = is_dynamic_shape || op_compiler_info->need_erase_ ||
                              !op_run_info->base_op_run_info.lazy_build || OpInBlackList(op_run_info) ||
                              GetExecutionMode() == kGraphMode || EnablePyNativeSyncRunning();
@@ -836,7 +842,6 @@ void MindRTBackend::RunOpImpl(bool single_op_cache_hit, const OpCompilerInfoPtr 
   }
   const auto &tensors_without_value_mask = GetTensorWithoutValueMask(op_run_info);
   runtime::UpdateDeviceAddress(graph, tensors_without_value_mask, device_context);
-  pynative::OpCompiler::GetInstance().SetGraphInputNodeToActualAbstract(op_run_info, graph);
   runtime::RunSingleOpGraph(graph, tensors_without_value_mask, device_context);
   if (!op_run_info->is_infer) {
     ReleaseForwardOutput(op_run_info->base_op_run_info.input_tensor);
@@ -844,6 +849,9 @@ void MindRTBackend::RunOpImpl(bool single_op_cache_hit, const OpCompilerInfoPtr 
   UpdateOutput(output_nodes, outputs);
   ClearGraphDeviceAddress(graph, device_context, op_run_info->is_gradient_out);
   ClearInputDeviceAddress(graph, device_context);
+  if (is_dynamic_shape) {
+    UpdateOutputAbstract(graph, op_run_info);
+  }
   if (op_compiler_info->need_erase_) {
     EraseSingleOpCache(op_run_info->base_op_run_info.graph_info);
   }
@@ -871,17 +879,6 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
     MS_EXCEPTION_IF_NULL(context_ptr);
     bool enable_cache = context_ptr->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_OP_GRAPH_CACHE);
     // If op not support dynamic shape, op will select static opinfo, update graph dynamic attr
-    bool is_dynamic_shape =
-      op_run_info->base_op_run_info.has_dynamic_output || op_run_info->base_op_run_info.has_dynamic_input;
-    if (is_dynamic_shape) {
-      const auto &graph = op_compiler_info->graph_;
-      MS_EXCEPTION_IF_NULL(graph);
-      graph->UpdateGraphDynamicAttr();
-      // Dynamic shape but select static op, must no cache
-      if (!graph->is_dynamic_shape()) {
-        enable_cache = false;
-      }
-    }
     op_compiler_info->need_erase_ = !enable_cache;
   }
 

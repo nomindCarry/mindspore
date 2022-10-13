@@ -364,8 +364,7 @@ class GradOperation(GradOperation_):
                 args, kwargs = _sens_divided_by_device_num_if_recomputation(grad_.sens_param, args, kwargs)
                 self._pynative_forward_run(fn, grad_, args, kwargs)
                 _pynative_executor.grad(fn, grad_, weights, self.grad_position, *args, **kwargs)
-                out = _pynative_executor(fn, grad_.sens_param, *args, **kwargs)
-                _pynative_executor.clear_grad(fn, *args, **kwargs)
+                out = _pynative_executor()
                 return out
         else:
             grad_.pynative_ = True
@@ -512,8 +511,7 @@ class _Grad(GradOperation_):
             def after_grad(*args, **kwargs):
                 res = self._pynative_forward_run(fn, grad_, args, kwargs)
                 _pynative_executor.grad(fn, grad_, weights, grad_position, *args, **kwargs)
-                out = _pynative_executor(fn, grad_.sens_param, *args, **kwargs)
-                _pynative_executor.clear_grad(fn, *args, **kwargs)
+                out = _pynative_executor()
                 if self.get_value:
                     return res, out
                 if self.has_aux:
