@@ -50,6 +50,9 @@
 #include "ps/ps_context.h"
 #endif
 
+#include "runtime/device/device_address_utils.h"
+#include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
+
 namespace mindspore {
 namespace compile {
 LinConvertResult MsBackend::MsConvert(const GraphSegmentPtr &segment, const std::string &target) {
@@ -143,40 +146,13 @@ std::vector<tensor::TensorPtr> GetTensorWithoutValueMask(const session::BackendO
   return tensors_without_value_node;
 }
 
-device::DeviceAddressPtr CloneEmptyDeviceAddress(const device::DeviceAddressPtr &old_device_address,
-                                                 const DeviceContext *device_context) {
-  MS_EXCEPTION_IF_NULL(old_device_address);
-  MS_EXCEPTION_IF_NULL(device_context);
-  auto new_device_address = device_context->device_res_manager_->CreateDeviceAddress(
-    nullptr, old_device_address->GetSize(), old_device_address->format(), old_device_address->type_id(),
-    old_device_address->host_shape());
-  MS_EXCEPTION_IF_NULL(new_device_address);
-  new_device_address->set_original_ref_count(old_device_address->original_ref_count());
-  new_device_address->ResetRefCount();
-  auto node = old_device_address->GetNodeIndex();
-  new_device_address->SetNodeIndex(node.first, node.second);
-  return new_device_address;
-}
-
 void ClearGraphDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *device_context, bool is_gradient_out) {
   MS_EXCEPTION_IF_NULL(graph);
   for (const auto &node : graph->execution_order()) {
     auto output_address_num = AnfAlgo::GetOutputAddressNum(node);
     // Clear old output device address of kernel
     for (size_t i = 0; i < output_address_num; ++i) {
-      if (!AnfAlgo::OutputAddrExist(node, i, false)) {
-        continue;
-      }
-      const auto &device_address = AnfAlgo::GetMutableOutputAddr(node, i, false);
-      if (device_address == nullptr) {
-        continue;
-      }
-      MS_EXCEPTION_IF_NULL(device_context);
-      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
-      if (is_gradient_out) {
-        new_device_address->set_from_persistent_mem(true);
-      }
-      AnfAlgo::SetOutputAddr(new_device_address, i, node.get());
+      AnfAlgo::SetOutputAddr(nullptr, i, node.get());
     }
 
     // Clear old workspace device address of kernel
@@ -184,12 +160,7 @@ void ClearGraphDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *d
     MS_EXCEPTION_IF_NULL(kernel_mod);
     auto workspace_lists = kernel_mod->GetWorkspaceSizeList();
     for (size_t i = 0; i < workspace_lists.size(); ++i) {
-      if (!AnfAlgo::WorkspaceAddrExist(node, i)) {
-        continue;
-      }
-      const auto &device_address = AnfAlgo::GetMutableWorkspaceAddr(node, i);
-      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
-      AnfAlgo::SetWorkspaceAddr(new_device_address, i, node.get());
+      AnfAlgo::SetWorkspaceAddr(nullptr, i, node.get());
     }
   }
 }
@@ -200,12 +171,7 @@ void ClearInputDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *d
   for (const auto &node : graph->input_nodes()) {
     MS_EXCEPTION_IF_NULL(node);
     if (node->isa<Parameter>()) {
-      auto device_address = AnfAlgo::GetMutableOutputAddr(node, 0, false);
-      if (device_address == nullptr) {
-        continue;
-      }
-      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
-      AnfAlgo::SetOutputAddr(new_device_address, 0, node.get());
+      AnfAlgo::SetOutputAddr(nullptr, 0, node.get());
     }
   }
 }
@@ -866,6 +832,9 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
     WaitTaskFinish();
   }
 
+  const auto &graph = op_compiler_info->graph_;
+  MS_EXCEPTION_IF_NULL(graph);
+
   if (!single_op_cache_hit) {
     auto context_ptr = MsContext::GetInstance();
     MS_EXCEPTION_IF_NULL(context_ptr);
@@ -883,6 +852,43 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
       }
     }
     op_compiler_info->need_erase_ = !enable_cache;
+  } else {
+    auto input_nodes = graph->input_nodes();
+    auto input_size = input_nodes.size();
+    auto input_tensors = GetTensorWithoutValueMask(op_run_info);
+    if (input_size > input_tensors.size()) {
+      MS_LOG(EXCEPTION) << "input_size is bigger than input_tensors size, input_size:" << input_size
+                        << ", input_tensors size:" << input_tensors.size();
+    }
+    // Update the Graph`s Parameter shape
+    for (size_t i = 0; i < input_size; ++i) {
+      MS_EXCEPTION_IF_NULL(input_tensors[i]);
+      auto type_of_tensor = input_tensors[i]->Dtype();
+      std::shared_ptr<abstract::AbstractTensor> abstract;
+      abstract = std::make_shared<abstract::AbstractTensor>(type_of_tensor, input_tensors[i]->shape());
+      input_nodes[i]->set_abstract(abstract);
+    }
+
+    // Update the Output shape
+    const auto &execution_order = graph->execution_order();
+    for (auto const &node : execution_order) {
+      MS_EXCEPTION_IF_NULL(node);
+      if (common::AnfAlgo::GetCNodeName(node) == "Cast") {
+        std::vector<TypeId> dtype{common::AnfAlgo::GetOutputInferDataType(node, 0)};
+        auto pre_node = common::AnfAlgo::GetPrevNodeOutput(node, 0).first;
+        auto shape_ptr = pre_node->Shape()->cast<abstract::ShapePtr>();
+        common::AnfAlgo::SetOutputInferTypeAndShape(dtype, {shape_ptr->shape()}, node.get());
+      } else {
+        node->set_abstract(op_run_info->base_op_run_info.abstract);
+      }
+    }
+
+    // Create input address before infer
+    runtime::DeviceAddressUtils::CreateParameterDeviceAddress(device_context, graph);
+    runtime::DeviceAddressUtils::CreateValueNodeDeviceAddress(device_context, graph);
+    runtime::DeviceAddressUtils::CreateKernelOutputDeviceAddress(device_context, graph, op_run_info->is_gradient_out);
+    runtime::DeviceAddressUtils::UpdateDeviceAddressForInplaceNode(graph);
+    runtime::DeviceAddressUtils::UpdateDeviceAddressForRefNode(graph);
   }
 
   RunOpImpl(single_op_cache_hit, op_compiler_info, op_run_info, outputs);

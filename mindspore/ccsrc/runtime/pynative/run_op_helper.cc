@@ -25,6 +25,7 @@
 #include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
 #include "include/common/utils/convert_utils.h"
 #include "runtime/device/ms_device_shape_transfer.h"
+#include "runtime/device/device_address_utils.h"
 #include "runtime/pynative/op_runtime_info.h"
 #include "runtime/pynative/op_executor.h"
 #include "runtime/graph_scheduler/actor/actor_common.h"
@@ -340,54 +341,17 @@ kernel::AddressPtrList CreateKernelInputAddress(const std::shared_ptr<OpRuntimeI
 }
 
 kernel::AddressPtrList CreateKernelWorkspaceAddress(const std::shared_ptr<OpRuntimeInfo> &runtime_info,
-                                                    const device::DeviceContext *device_context, const CNodePtr &kernel,
-                                                    bool is_dynamic_shape) {
+                                                    const device::DeviceContext *device_context, const CNodePtr &kernel) {
   MS_EXCEPTION_IF_NULL(runtime_info);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_EXCEPTION_IF_NULL(device_context->device_res_manager_);
-  auto workspace_size = runtime_info->GetWorkspaceSize();
   auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
   MS_EXCEPTION_IF_NULL(kernel_mod);
   auto workspace_sizes = kernel_mod->GetWorkspaceSizeList();
 
-  std::vector<device::DeviceAddressPtr> add_workspaces;
-  if (is_dynamic_shape) {
-    // Resize of workspaces, because of the dynamic size of workspace.
-    if (workspace_size < workspace_sizes.size()) {
-      for (size_t i = workspace_size; i < workspace_sizes.size(); ++i) {
-        auto device_address = device_context->device_res_manager_->CreateDeviceAddress(nullptr, workspace_sizes[i], "",
-                                                                                       kTypeUnknown, ShapeVector());
-        MS_LOG(DEBUG) << "Create addr for node:" << common::AnfAlgo::GetNodeDebugString(kernel)
-                      << " addr:" << device_address;
-        AnfAlgo::SetWorkspaceAddr(device_address, i, kernel.get());  // set to kernel_info
-        MS_EXCEPTION_IF_NULL(device_address);
-        (void)add_workspaces.emplace_back(device_address);
-      }
-    }
-  }
-
-  // Set workspace address new size
-  for (size_t i = 0; i < workspace_size && i < workspace_sizes.size(); ++i) {
-    auto device_address = runtime_info->GetWorkspaceDeviceAddress(i);
-    MS_EXCEPTION_IF_NULL(device_address);
-    device_address->SetSize(workspace_sizes[i]);
-  }
-
   kernel::AddressPtrList workspaces;
-  for (size_t i = 0; i < workspace_size && i < workspace_sizes.size(); ++i) {
+  for (size_t i = 0; i < workspace_sizes.size(); ++i) {
     auto device_address = runtime_info->GetWorkspaceDeviceAddress(i);
-    MS_EXCEPTION_IF_NULL(device_address);
-    if (device_address->GetPtr() == nullptr &&
-        !device_context->device_res_manager_->AllocateMemory(device_address.get())) {
-      MS_LOG(EXCEPTION) << "Allocate workspace memory failed";
-    }
-    (void)workspaces.emplace_back(
-      std::make_shared<kernel::Address>(device_address->GetMutablePtr(), device_address->GetSize()));
-    MS_LOG(DEBUG) << "workspace[" << i << "]:" << workspaces.back()->addr << " size:" << workspaces.back()->size;
-  }
-
-  for (size_t i = workspace_size; i < workspace_sizes.size(); ++i) {
-    auto device_address = add_workspaces[i];
     MS_EXCEPTION_IF_NULL(device_address);
     if (device_address->GetPtr() == nullptr &&
         !device_context->device_res_manager_->AllocateMemory(device_address.get())) {
@@ -459,15 +423,11 @@ void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *dev
     }
     auto inputs = CreateKernelInputAddress(runtime_info);
 
-    if (is_dynamic_shape) {
-      InferNodeRealShape(node);
-      ResizeNodeInput(node);
-#ifndef ENABLE_SECURITY
-      ProfilerManager::GetInstance()->SetNetDynamicShapeStatus();
-#endif
-    }
+    InferNodeRealShape(node);
+    ResizeNodeInput(node);
 
-    auto workspaces = CreateKernelWorkspaceAddress(runtime_info, device_context, node, is_dynamic_shape);
+    runtime::DeviceAddressUtils::CreateKernelWorkspaceDeviceAddress(device_context, graph);
+    auto workspaces = CreateKernelWorkspaceAddress(runtime_info, device_context, node);
 
     if (!MallocForKernelOutput(runtime_info, node, device_context)) {
       MS_LOG(EXCEPTION) << "Malloc for kernel output failed, Memory isn't enough, node:" << node->fullname_with_scope();
