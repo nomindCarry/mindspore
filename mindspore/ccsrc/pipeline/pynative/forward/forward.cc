@@ -90,7 +90,7 @@ void GetSingleOpGraphInfo(const FrontendOpRunInfoPtr &op_run_info, const std::st
   }
   std::ostringstream buf;
   buf << cur_target << "_";
-  buf << op_run_info->base_op_run_info.op_name;
+  buf << op_run_info->base_op_run_info.op_name << "_";
   bool has_const_input = false;
   const auto &op_prim = op_run_info->op_prim;
   MS_EXCEPTION_IF_NULL(op_prim);
@@ -98,11 +98,7 @@ void GetSingleOpGraphInfo(const FrontendOpRunInfoPtr &op_run_info, const std::st
   for (size_t index = 0; index < input_tensors.size(); ++index) {
     const auto &input_tensor = input_tensors[index];
     MS_EXCEPTION_IF_NULL(input_tensor);
-    if (input_tensor->base_shape_ptr() != nullptr) {
-      buf << input_tensor->base_shape_ptr()->ToString();
-    } else {
-      buf << input_tensor->shape();
-    }
+    buf << input_tensor->shape().size() << "_";
     buf << input_tensor->data_type();
     buf << input_tensor->padding_type();
     // In the case of the same shape, but dtype and format are inconsistent
