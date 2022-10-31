@@ -27,6 +27,7 @@
 #include "include/common/utils/convert_utils_py.h"
 #include "frontend/optimizer/ad/grad.h"
 #include "pipeline/jit/pass.h"
+#include "utils/profile.h"
 
 namespace mindspore {
 namespace pynative {
@@ -647,6 +648,7 @@ py::object GradExecutor::CheckAlreadyRun(const prim::GradOperationPtr &grad, con
 }
 
 py::object GradExecutor::RunGradGraph() {
+  auto start = GetTime();
   MS_EXCEPTION_IF_NULL(top_input_args_info_);
   const auto &resource = top_cell()->resource();
   MS_EXCEPTION_IF_NULL(resource);
@@ -669,6 +671,8 @@ py::object GradExecutor::RunGradGraph() {
   const auto &cur_run_bprop_graph = resource->func_graph();
   const auto &out_abs = GetGradGraphOutputAbstract(cur_run_bprop_graph);
   MakeNestedCnode(top_input_args_info_->has_custom_bprop, flatten_v, cur_run_bprop_graph, out_value);
+  auto end = GetTime();
+  MsProfile::StatTime("RunGradGraph", end - start);
   return BaseRefToPyData(out_value, out_abs);
 }
 

@@ -30,6 +30,7 @@
 #include "runtime/pynative/op_executor.h"
 #include "runtime/graph_scheduler/actor/actor_common.h"
 #include "kernel/common_utils.h"
+#include "utils/profile.h"
 #ifndef ENABLE_SECURITY
 #include "profiler/device/profiling.h"
 using mindspore::profiler::ProfilerManager;
@@ -520,7 +521,10 @@ void RunSingleOpGraph(const KernelGraphPtr &graph, const std::vector<tensor::Ten
                       const device::DeviceContext *device_context) {
   WaitCommunicationFinish(input_tensors);
   CopyDataToDevice(graph, input_tensors, device_context);
+  auto start = GetTime();
   LaunchKernels(graph, device_context);
+  auto end = GetTime();
+  MsProfile::StatTime("LaunchKernels", end - start);
   ReleaseKernelResource(graph);
 }
 
@@ -528,7 +532,10 @@ void RunSingleOpGraphDynamic(const KernelGraphPtr &graph, const std::vector<tens
                       const device::DeviceContext *device_context) {
   WaitCommunicationFinish(input_tensors);
   CopyDataToDevice(graph, input_tensors, device_context);
+  auto start = GetTime();
   LaunchKernelsDynamic(graph, device_context);
+  auto end = GetTime();
+  MsProfile::StatTime("LaunchKernelsDynamic", end - start);
   ReleaseKernelResource(graph);
 }
 }  // namespace mindspore::runtime

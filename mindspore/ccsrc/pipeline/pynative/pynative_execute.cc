@@ -25,6 +25,7 @@
 #include "runtime/pynative/op_executor.h"
 #include "runtime/pynative/op_compiler.h"
 #include "ir/cell.h"
+#include "utils/profile.h"
 
 namespace mindspore::pynative {
 std::shared_ptr<PyNativeExecutor> PyNativeExecutor::executor_ = nullptr;
@@ -143,7 +144,10 @@ void PyNativeExecutor::Init() {
   forward_executor_->set_grad_executor(grad_executor_);
 }
 
-void PyNativeExecutor::Sync() const { forward_executor()->Sync(); }
+void PyNativeExecutor::Sync() const { forward_executor()->Sync();
+  MsProfile::Print();
+  MsProfile::Reset();
+}
 
 void PyNativeExecutor::SetHookChanged(const py::object &cell) const {
   if (!py::isinstance<Cell>(cell)) {

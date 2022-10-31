@@ -22,6 +22,7 @@
 #include "include/common/utils/scoped_long_running.h"
 #include "backend/graph_compiler/transform.h"
 #include "utils/ms_context.h"
+#include "utils/profile.h"
 
 namespace mindspore {
 namespace pynative {
@@ -430,9 +431,15 @@ ValuePtr ForwardExecutor::RunOpInMs(const FrontendOpRunInfoPtr &op_run_info) {
   MS_EXCEPTION_IF_NULL(cur_mind_rt_backend);
   bool is_dynamic_shape = op_run_info->base_op_run_info.has_dynamic_output;
   if (is_dynamic_shape) {
+    auto start = GetTime();
     cur_mind_rt_backend->RunOpDynamic(backend_op_run_info, &outputs);
+    auto end = GetTime();
+    MsProfile::StatTime("RunOpDynamic", end - start);
   } else {
+    auto start = GetTime();
     cur_mind_rt_backend->RunOp(backend_op_run_info, &outputs);
+    auto end = GetTime();
+    MsProfile::StatTime("RunOp", end - start);
   }
 
   if (op_run_info->base_op_run_info.has_dynamic_output) {

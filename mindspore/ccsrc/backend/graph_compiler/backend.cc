@@ -561,6 +561,8 @@ void MindRTBackend::RunGraphByActors(const ActorInfo &actor_info, const GraphCom
   auto actor_set = runtime::GraphScheduler::GetInstance().Fetch(actor_info);
   if (actor_set == nullptr) {
     // Need to compile graph for the first step.
+
+    auto start2 = GetTime();
     for (size_t i = 0; i < graphs.size(); ++i) {
       const auto &graph = graphs[i];
       MS_EXCEPTION_IF_NULL(graph);
@@ -581,6 +583,8 @@ void MindRTBackend::RunGraphByActors(const ActorInfo &actor_info, const GraphCom
       AnfAlgo::UpdateGraphValidRefPair(graph);
       pynative::GraphAdapter::SensTensorToDevice(graph, device_contexts[i]);
     }
+    auto end2 = GetTime();
+    MsProfile::StatTime("Need to compile graph for the first step.", end2 - start2);
 
     ParseControlNodes(graph_compiler_info);
     actor_set = runtime::GraphScheduler::GetInstance().Transform(graph_compiler_info);
@@ -599,20 +603,25 @@ void MindRTBackend::RunGraphByActors(const ActorInfo &actor_info, const GraphCom
       pynative::GraphAdapter::GenerateRefCountForBpropValueNode(graph);
     }
   }
-
+  auto start1 = GetTime();
   if (root_graph_->has_flag(kFlagIsPynativeBpropGraph)) {
     for (size_t i = 0; i < graphs.size(); ++i) {
       pynative::GraphAdapter::UpdateForwardOutputInBpropGraph(graphs[i], device_contexts[i], no_control_flow);
       pynative::GraphAdapter::UpdateDynamicValueNodeAbstract(graphs[i]);
     }
   }
+  auto end1 = GetTime();
+  MsProfile::StatTime("UpdateForwardOutputInBpropGraph and UpdateDynamicValueNodeAbstract", end1 - start1);
 
   std::vector<std::vector<tensor::TensorPtr>> input_tensors = GetRunGraphInputs(graph_compiler_info, args);
   pynative::GraphAdapter::HandleHeterogeneousTensors(input_tensors, device_contexts);
 
   // Release GIL and run actor DAG.
   mindspore::ScopedLongRunning long_running;
+  auto start = GetTime();
   runtime::GraphScheduler::GetInstance().Run(actor_set, input_tensors);
+  auto end = GetTime();
+  MsProfile::StatTime("Run", end - start);
 
   MS_EXCEPTION_IF_NULL(graph_compiler_);
   graph_compiler_->Summary(graph_compiler_info.graphs_);
@@ -701,7 +710,10 @@ void MindRTBackend::RunGraphByCondition(const ActorInfo &actor_info, const Graph
   if (contain_cut_graph || root_graph_->has_flag(kFlagIsDynamicStructure)) {
     RunGraphBySingleOp(graph_compiler_info, args, outputs);
   } else {
+    auto start = GetTime();
     RunGraphByActors(actor_info, graph_compiler_info, args, outputs);
+    auto end = GetTime();
+    MsProfile::StatTime("RunGraphByActors", end - start);
   }
   MS_LOG(INFO) << "Status record: end run actor: " << actor_info;
 }
