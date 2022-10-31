@@ -508,7 +508,7 @@ bool DataConvert::NeedConvertConstInputToAttr(const FrontendOpRunInfoPtr &op_run
   }
 
   auto reg_info = opt::OpAdaptationInfoRegister::GetInstance().GetOpAdaptationInfo(
-    op_run_info->base_op_run_info.op_name, device_target, op_run_info->base_op_run_info.has_dynamic_output);
+    op_run_info->base_op_run_info.op_name, device_target, true);
   if (reg_info == nullptr) {
     return false;
   } else {
