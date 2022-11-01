@@ -40,6 +40,7 @@
 #include "runtime/pynative/graph_adapter.h"
 #include "distributed/recovery/recovery_context.h"
 #include "include/common/utils/scoped_long_running.h"
+#include "backend/common/optimizer/dynamic_shape/dynamic_shape_helper.h"
 #ifdef ENABLE_DEBUGGER
 #include "debug/debugger/debugger.h"
 #endif
@@ -873,14 +874,7 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
     const auto &execution_order = graph->execution_order();
     for (auto const &node : execution_order) {
       MS_EXCEPTION_IF_NULL(node);
-      if (common::AnfAlgo::GetCNodeName(node) == "Cast") {
-        std::vector<TypeId> dtype{common::AnfAlgo::GetOutputInferDataType(node, 0)};
-        auto pre_node = common::AnfAlgo::GetPrevNodeOutput(node, 0).first;
-        auto shape_ptr = pre_node->Shape()->cast<abstract::ShapePtr>();
-        common::AnfAlgo::SetOutputInferTypeAndShape(dtype, {shape_ptr->shape()}, node.get());
-      } else {
-        node->set_abstract(op_run_info->base_op_run_info.abstract);
-      }
+      opt::dynamic_shape::InferOp(node);
     }
 
     // Create input address before infer
