@@ -405,7 +405,7 @@ void ResizeNodeInput(const CNodePtr &kernel) {
 }
 
 // kernel_mode launch
-void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
+void LaunchKernelsDynamic(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_LOG(DEBUG) << "Start";
@@ -444,6 +444,37 @@ void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *dev
     if (is_dynamic_shape) {
       kernel::UpdateNodeShape(node);
       UpdateOutputAddrSize(node, runtime_info);
+    }
+  }
+  MS_LOG(DEBUG) << "End";
+}
+
+void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_LOG(DEBUG) << "Start";
+
+  // Get device address from OpRuntimeInfo
+  const auto &execution_order = graph->execution_order();
+  for (auto const &node : execution_order) {
+    MS_EXCEPTION_IF_NULL(node);
+    auto runtime_info = node->user_data<runtime::OpRuntimeInfo>();
+    MS_EXCEPTION_IF_NULL(runtime_info);
+
+    if (!MallocForKernelInput(runtime_info, device_context)) {
+      MS_LOG(EXCEPTION) << "Malloc for kernel input failed, Memory isn't enough, node:" << node->fullname_with_scope();
+    }
+    auto inputs = CreateKernelInputAddress(runtime_info);
+
+    auto workspaces = CreateKernelWorkspaceAddress(runtime_info, device_context, node);
+
+    if (!MallocForKernelOutput(runtime_info, node, device_context)) {
+      MS_LOG(EXCEPTION) << "Malloc for kernel output failed, Memory isn't enough, node:" << node->fullname_with_scope();
+    }
+    auto outputs = CreateKernelOutputAddress(runtime_info);
+    const size_t stream_id = AnfAlgo::GetStreamId(node);
+    if (!device_context->kernel_executor_->LaunchKernel(node, inputs, workspaces, outputs, stream_id)) {
+      MS_LOG(EXCEPTION) << "Launch kernel failed, name:" << node->fullname_with_scope();
     }
   }
   MS_LOG(DEBUG) << "End";
@@ -490,6 +521,14 @@ void RunSingleOpGraph(const KernelGraphPtr &graph, const std::vector<tensor::Ten
   WaitCommunicationFinish(input_tensors);
   CopyDataToDevice(graph, input_tensors, device_context);
   LaunchKernels(graph, device_context);
+  ReleaseKernelResource(graph);
+}
+
+void RunSingleOpGraphDynamic(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &input_tensors,
+                      const device::DeviceContext *device_context) {
+  WaitCommunicationFinish(input_tensors);
+  CopyDataToDevice(graph, input_tensors, device_context);
+  LaunchKernelsDynamic(graph, device_context);
   ReleaseKernelResource(graph);
 }
 }  // namespace mindspore::runtime

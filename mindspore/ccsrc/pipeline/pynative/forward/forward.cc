@@ -98,7 +98,16 @@ void GetSingleOpGraphInfo(const FrontendOpRunInfoPtr &op_run_info, const std::st
   for (size_t index = 0; index < input_tensors.size(); ++index) {
     const auto &input_tensor = input_tensors[index];
     MS_EXCEPTION_IF_NULL(input_tensor);
-    buf << input_tensor->shape().size() << "_";
+    bool is_dynamic_shape = op_run_info->base_op_run_info.has_dynamic_output;
+    if (is_dynamic_shape) {
+      buf << input_tensor->shape().size() << "_";
+    } else {
+      if (input_tensor->base_shape_ptr() != nullptr) {
+        buf << input_tensor->base_shape_ptr()->ToString();
+      } else {
+        buf << input_tensor->shape();
+      }
+    }
     buf << input_tensor->data_type();
     buf << input_tensor->padding_type();
     // In the case of the same shape, but dtype and format are inconsistent
@@ -419,7 +428,13 @@ ValuePtr ForwardExecutor::RunOpInMs(const FrontendOpRunInfoPtr &op_run_info) {
   VectorRef outputs;
   const auto &cur_mind_rt_backend = GetMindRtBackend(cur_target);
   MS_EXCEPTION_IF_NULL(cur_mind_rt_backend);
-  cur_mind_rt_backend->RunOp(backend_op_run_info, &outputs);
+  bool is_dynamic_shape = op_run_info->base_op_run_info.has_dynamic_output;
+  if (is_dynamic_shape) {
+    cur_mind_rt_backend->RunOpDynamic(backend_op_run_info, &outputs);
+  } else {
+    cur_mind_rt_backend->RunOp(backend_op_run_info, &outputs);
+  }
+
   if (op_run_info->base_op_run_info.has_dynamic_output) {
     op_run_info->base_op_run_info.abstract = backend_op_run_info->base_op_run_info.abstract;
   }
