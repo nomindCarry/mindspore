@@ -423,7 +423,10 @@ void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *dev
     }
     auto inputs = CreateKernelInputAddress(runtime_info);
 
-    InferNodeRealShape(node);
+    auto args = kernel::GetArgsFromCNode(node);
+    if (args == nullptr) {
+      InferNodeRealShape(node);
+    }
     ResizeNodeInput(node);
 
     runtime::DeviceAddressUtils::CreateKernelWorkspaceDeviceAddress(device_context, graph);
