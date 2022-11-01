@@ -341,6 +341,67 @@ kernel::AddressPtrList CreateKernelInputAddress(const std::shared_ptr<OpRuntimeI
 }
 
 kernel::AddressPtrList CreateKernelWorkspaceAddress(const std::shared_ptr<OpRuntimeInfo> &runtime_info,
+                                                    const device::DeviceContext *device_context, const CNodePtr &kernel,
+                                                    bool is_dynamic_shape) {
+  MS_EXCEPTION_IF_NULL(runtime_info);
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_EXCEPTION_IF_NULL(device_context->device_res_manager_);
+  auto workspace_size = runtime_info->GetWorkspaceSize();
+  auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
+  MS_EXCEPTION_IF_NULL(kernel_mod);
+  auto workspace_sizes = kernel_mod->GetWorkspaceSizeList();
+
+  std::vector<device::DeviceAddressPtr> add_workspaces;
+  if (is_dynamic_shape) {
+    // Resize of workspaces, because of the dynamic size of workspace.
+    if (workspace_size < workspace_sizes.size()) {
+      for (size_t i = workspace_size; i < workspace_sizes.size(); ++i) {
+        auto device_address = device_context->device_res_manager_->CreateDeviceAddress(nullptr, workspace_sizes[i], "",
+                                                                                       kTypeUnknown, ShapeVector());
+        MS_LOG(DEBUG) << "Create addr for node:" << common::AnfAlgo::GetNodeDebugString(kernel)
+                      << " addr:" << device_address;
+        AnfAlgo::SetWorkspaceAddr(device_address, i, kernel.get());  // set to kernel_info
+        MS_EXCEPTION_IF_NULL(device_address);
+        (void)add_workspaces.emplace_back(device_address);
+      }
+    }
+  }
+
+  // Set workspace address new size
+  for (size_t i = 0; i < workspace_size && i < workspace_sizes.size(); ++i) {
+    auto device_address = runtime_info->GetWorkspaceDeviceAddress(i);
+    MS_EXCEPTION_IF_NULL(device_address);
+    device_address->SetSize(workspace_sizes[i]);
+  }
+
+  kernel::AddressPtrList workspaces;
+  for (size_t i = 0; i < workspace_size && i < workspace_sizes.size(); ++i) {
+    auto device_address = runtime_info->GetWorkspaceDeviceAddress(i);
+    MS_EXCEPTION_IF_NULL(device_address);
+    if (device_address->GetPtr() == nullptr &&
+        !device_context->device_res_manager_->AllocateMemory(device_address.get())) {
+      MS_LOG(EXCEPTION) << "Allocate workspace memory failed";
+    }
+    (void)workspaces.emplace_back(
+            std::make_shared<kernel::Address>(device_address->GetMutablePtr(), device_address->GetSize()));
+    MS_LOG(DEBUG) << "workspace[" << i << "]:" << workspaces.back()->addr << " size:" << workspaces.back()->size;
+  }
+
+  for (size_t i = workspace_size; i < workspace_sizes.size(); ++i) {
+    auto device_address = add_workspaces[i];
+    MS_EXCEPTION_IF_NULL(device_address);
+    if (device_address->GetPtr() == nullptr &&
+        !device_context->device_res_manager_->AllocateMemory(device_address.get())) {
+      MS_LOG(EXCEPTION) << "Allocate workspace memory failed";
+    }
+    (void)workspaces.emplace_back(
+            std::make_shared<kernel::Address>(device_address->GetMutablePtr(), device_address->GetSize()));
+    MS_LOG(DEBUG) << "workspace[" << i << "]:" << workspaces.back()->addr << " size:" << workspaces.back()->size;
+  }
+  return workspaces;
+}
+
+kernel::AddressPtrList CreateKernelWorkspaceAddressDynamic(const std::shared_ptr<OpRuntimeInfo> &runtime_info,
                                                     const device::DeviceContext *device_context, const CNodePtr &kernel) {
   MS_EXCEPTION_IF_NULL(runtime_info);
   MS_EXCEPTION_IF_NULL(device_context);
@@ -405,7 +466,7 @@ void ResizeNodeInput(const CNodePtr &kernel) {
 }
 
 // kernel_mode launch
-void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
+void LaunchKernelsDynamic(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_LOG(DEBUG) << "Start";
@@ -430,7 +491,7 @@ void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *dev
     ResizeNodeInput(node);
 
     runtime::DeviceAddressUtils::CreateKernelWorkspaceDeviceAddress(device_context, graph);
-    auto workspaces = CreateKernelWorkspaceAddress(runtime_info, device_context, node);
+    auto workspaces = CreateKernelWorkspaceAddressDynamic(runtime_info, device_context, node);
 
     if (!MallocForKernelOutput(runtime_info, node, device_context)) {
       MS_LOG(EXCEPTION) << "Malloc for kernel output failed, Memory isn't enough, node:" << node->fullname_with_scope();
@@ -444,6 +505,37 @@ void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *dev
     if (is_dynamic_shape) {
       kernel::UpdateNodeShape(node);
       UpdateOutputAddrSize(node, runtime_info);
+    }
+  }
+  MS_LOG(DEBUG) << "End";
+}
+
+void LaunchKernels(const KernelGraphPtr &graph, const device::DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_LOG(DEBUG) << "Start";
+
+  // Get device address from OpRuntimeInfo
+  const auto &execution_order = graph->execution_order();
+  for (auto const &node : execution_order) {
+    MS_EXCEPTION_IF_NULL(node);
+    auto runtime_info = node->user_data<runtime::OpRuntimeInfo>();
+    MS_EXCEPTION_IF_NULL(runtime_info);
+
+    if (!MallocForKernelInput(runtime_info, device_context)) {
+      MS_LOG(EXCEPTION) << "Malloc for kernel input failed, Memory isn't enough, node:" << node->fullname_with_scope();
+    }
+    auto inputs = CreateKernelInputAddress(runtime_info);
+    auto is_dynamic_shape = common::AnfAlgo::IsDynamicShape(node);
+    auto workspaces = CreateKernelWorkspaceAddress(runtime_info, device_context, node, is_dynamic_shape);
+
+    if (!MallocForKernelOutput(runtime_info, node, device_context)) {
+      MS_LOG(EXCEPTION) << "Malloc for kernel output failed, Memory isn't enough, node:" << node->fullname_with_scope();
+    }
+    auto outputs = CreateKernelOutputAddress(runtime_info);
+    const size_t stream_id = AnfAlgo::GetStreamId(node);
+    if (!device_context->kernel_executor_->LaunchKernel(node, inputs, workspaces, outputs, stream_id)) {
+      MS_LOG(EXCEPTION) << "Launch kernel failed, name:" << node->fullname_with_scope();
     }
   }
   MS_LOG(DEBUG) << "End";
@@ -490,6 +582,14 @@ void RunSingleOpGraph(const KernelGraphPtr &graph, const std::vector<tensor::Ten
   WaitCommunicationFinish(input_tensors);
   CopyDataToDevice(graph, input_tensors, device_context);
   LaunchKernels(graph, device_context);
+  ReleaseKernelResource(graph);
+}
+
+void RunSingleOpGraphDynamic(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &input_tensors,
+                      const device::DeviceContext *device_context) {
+  WaitCommunicationFinish(input_tensors);
+  CopyDataToDevice(graph, input_tensors, device_context);
+  LaunchKernelsDynamic(graph, device_context);
   ReleaseKernelResource(graph);
 }
 }  // namespace mindspore::runtime

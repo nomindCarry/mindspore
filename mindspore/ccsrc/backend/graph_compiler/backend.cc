@@ -147,7 +147,58 @@ std::vector<tensor::TensorPtr> GetTensorWithoutValueMask(const session::BackendO
   return tensors_without_value_node;
 }
 
+device::DeviceAddressPtr CloneEmptyDeviceAddress(const device::DeviceAddressPtr &old_device_address,
+                                                 const DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(old_device_address);
+  MS_EXCEPTION_IF_NULL(device_context);
+  auto new_device_address = device_context->device_res_manager_->CreateDeviceAddress(
+    nullptr, old_device_address->GetSize(), old_device_address->format(), old_device_address->type_id(),
+    old_device_address->host_shape());
+  MS_EXCEPTION_IF_NULL(new_device_address);
+  new_device_address->set_original_ref_count(old_device_address->original_ref_count());
+  new_device_address->ResetRefCount();
+  auto node = old_device_address->GetNodeIndex();
+  new_device_address->SetNodeIndex(node.first, node.second);
+  return new_device_address;
+}
+
 void ClearGraphDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *device_context, bool is_gradient_out) {
+  MS_EXCEPTION_IF_NULL(graph);
+  for (const auto &node : graph->execution_order()) {
+    auto output_address_num = AnfAlgo::GetOutputAddressNum(node);
+    // Clear old output device address of kernel
+    for (size_t i = 0; i < output_address_num; ++i) {
+      if (!AnfAlgo::OutputAddrExist(node, i, false)) {
+        continue;
+      }
+      const auto &device_address = AnfAlgo::GetMutableOutputAddr(node, i, false);
+      if (device_address == nullptr) {
+        continue;
+      }
+      MS_EXCEPTION_IF_NULL(device_context);
+      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
+      if (is_gradient_out) {
+        new_device_address->set_from_persistent_mem(true);
+      }
+      AnfAlgo::SetOutputAddr(new_device_address, i, node.get());
+    }
+
+    // Clear old workspace device address of kernel
+    auto kernel_mod = AnfAlgo::GetKernelMod(node);
+    MS_EXCEPTION_IF_NULL(kernel_mod);
+    auto workspace_lists = kernel_mod->GetWorkspaceSizeList();
+    for (size_t i = 0; i < workspace_lists.size(); ++i) {
+      if (!AnfAlgo::WorkspaceAddrExist(node, i)) {
+        continue;
+      }
+      const auto &device_address = AnfAlgo::GetMutableWorkspaceAddr(node, i);
+      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
+      AnfAlgo::SetWorkspaceAddr(new_device_address, i, node.get());
+    }
+  }
+}
+
+void ClearGraphDeviceAddressDynamic(const KernelGraphPtr &graph, const DeviceContext *device_context, bool is_gradient_out) {
   MS_EXCEPTION_IF_NULL(graph);
   for (const auto &node : graph->execution_order()) {
     auto output_address_num = AnfAlgo::GetOutputAddressNum(node);
@@ -167,6 +218,22 @@ void ClearGraphDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *d
 }
 
 void ClearInputDeviceAddress(const KernelGraphPtr &graph, const DeviceContext *device_context) {
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(device_context);
+  for (const auto &node : graph->input_nodes()) {
+    MS_EXCEPTION_IF_NULL(node);
+    if (node->isa<Parameter>()) {
+      auto device_address = AnfAlgo::GetMutableOutputAddr(node, 0, false);
+      if (device_address == nullptr) {
+        continue;
+      }
+      auto new_device_address = CloneEmptyDeviceAddress(device_address, device_context);
+      AnfAlgo::SetOutputAddr(new_device_address, 0, node.get());
+    }
+  }
+}
+
+void ClearInputDeviceAddressDynamic(const KernelGraphPtr &graph, const DeviceContext *device_context) {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(device_context);
   for (const auto &node : graph->input_nodes()) {
@@ -591,7 +658,12 @@ void MindRTBackend::RunGraphBySingleOp(const GraphCompilerInfo &graph_compiler_i
         graph_compiler_->GetSingleOpRunInfoAndGraphInfo(kernel, input_tensor_info, &op_run_info, &graph_info,
                                                         &graph_output_info);
 
-        RunOp(op_run_info, &op_outputs);
+        bool use_dynamic_shape_process = op_run_info->base_op_run_info.use_dynamic_shape_process;
+        if (use_dynamic_shape_process) {
+          RunOpDynamic(op_run_info, &op_outputs);
+        } else {
+          RunOp(op_run_info, &op_outputs);
+        }
       } else {
         WaitTaskFinish();
         RunControlOperator(graph_compiler_, graph, kernel, op_output_map, parameter_index, inputs[graph_index],
@@ -672,17 +744,26 @@ void MindRTBackend::OpRunCallback(const std::shared_ptr<runtime::OpTaskContext> 
   MS_EXCEPTION_IF_NULL(ms_context);
   auto infer_flag = ms_context->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_INFER);
   ms_context->set_param<bool>(MS_CTX_ENABLE_PYNATIVE_INFER, context->is_pynative_infer());
+  bool use_dynamic_shape_process = context->op_run_info()->base_op_run_info.use_dynamic_shape_process;
+  if (use_dynamic_shape_process) {
+    runtime::RunSingleOpGraphDynamic(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
+                              context->device_context());
+  } else {
+    runtime::RunSingleOpGraph(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
+                              context->device_context());
+  }
 
-  // Set graph input to real abstract
-  pynative::OpCompiler::GetInstance().SetGraphInputNodeToActualAbstract(context->op_run_info(), context->graph());
-
-  runtime::RunSingleOpGraph(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
-                            context->device_context());
   if (!context->op_run_info()->is_infer) {
     ReleaseForwardOutput(context->op_run_info()->base_op_run_info.input_tensor);
   }
-  ClearGraphDeviceAddress(context->graph(), context->device_context(), context->op_run_info()->is_gradient_out);
-  ClearInputDeviceAddress(context->graph(), context->device_context());
+  if (use_dynamic_shape_process) {
+    ClearGraphDeviceAddressDynamic(context->graph(), context->device_context(), context->op_run_info()->is_gradient_out);
+    ClearInputDeviceAddressDynamic(context->graph(), context->device_context());
+  } else {
+    ClearGraphDeviceAddress(context->graph(), context->device_context(), context->op_run_info()->is_gradient_out);
+    ClearInputDeviceAddress(context->graph(), context->device_context());
+  }
+
   // Reset PyNative infer flag.
   ms_context->set_param<bool>(MS_CTX_ENABLE_PYNATIVE_INFER, infer_flag);
   MS_LOG(DEBUG) << "OpRunCallback end";
@@ -803,20 +884,56 @@ void MindRTBackend::RunOpImpl(bool single_op_cache_hit, const OpCompilerInfoPtr 
   }
   const auto &tensors_without_value_mask = GetTensorWithoutValueMask(op_run_info);
   runtime::UpdateDeviceAddress(graph, tensors_without_value_mask, device_context);
-  pynative::OpCompiler::GetInstance().SetGraphInputNodeToActualAbstract(op_run_info, graph);
-  runtime::RunSingleOpGraph(graph, tensors_without_value_mask, device_context);
+  bool use_dynamic_shape_process = op_run_info->base_op_run_info.use_dynamic_shape_process;
+  if (use_dynamic_shape_process) {
+    runtime::RunSingleOpGraphDynamic(graph, tensors_without_value_mask, device_context);
+  } else {
+    runtime::RunSingleOpGraph(graph, tensors_without_value_mask, device_context);
+  }
   if (!op_run_info->is_infer) {
     ReleaseForwardOutput(op_run_info->base_op_run_info.input_tensor);
   }
   UpdateOutput(output_nodes, outputs);
-  ClearGraphDeviceAddress(graph, device_context, op_run_info->is_gradient_out);
-  ClearInputDeviceAddress(graph, device_context);
+  if (use_dynamic_shape_process) {
+    ClearGraphDeviceAddressDynamic(graph, device_context, op_run_info->is_gradient_out);
+    ClearInputDeviceAddressDynamic(graph, device_context);
+  } else {
+    ClearGraphDeviceAddress(graph, device_context, op_run_info->is_gradient_out);
+    ClearInputDeviceAddress(graph, device_context);
+  }
   if (op_compiler_info->need_erase_) {
     EraseSingleOpCache(op_run_info->base_op_run_info.graph_info);
   }
 }
 
 void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, VectorRef *outputs) {
+  MS_EXCEPTION_IF_NULL(op_run_info);
+  MS_EXCEPTION_IF_NULL(graph_compiler_);
+  // Get the device context.
+  const auto &device_context =
+    device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext({device_name_, device_id_});
+  MS_EXCEPTION_IF_NULL(device_context);
+  device_context->Initialize();
+
+  bool single_op_cache_hit = true;
+  auto op_compiler_info =
+    pynative::OpCompiler::GetInstance().Compile(op_run_info, &single_op_cache_hit, device_context);
+  MS_EXCEPTION_IF_NULL(op_compiler_info);
+  if (runtime::OpExecutor::GetInstance().ActorInQueue(op_compiler_info->graph_id_)) {
+    WaitTaskFinish();
+  }
+
+  if (!single_op_cache_hit) {
+    auto context_ptr = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context_ptr);
+    bool enable_cache = context_ptr->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_OP_GRAPH_CACHE);
+    op_compiler_info->need_erase_ = !enable_cache;
+  }
+
+  RunOpImpl(single_op_cache_hit, op_compiler_info, op_run_info, outputs);
+}
+
+void MindRTBackend::RunOpDynamic(const session::BackendOpRunInfoPtr &op_run_info, VectorRef *outputs) {
   MS_EXCEPTION_IF_NULL(op_run_info);
   MS_EXCEPTION_IF_NULL(graph_compiler_);
   // Get the device context.
@@ -840,18 +957,6 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
     auto context_ptr = MsContext::GetInstance();
     MS_EXCEPTION_IF_NULL(context_ptr);
     bool enable_cache = context_ptr->get_param<bool>(MS_CTX_ENABLE_PYNATIVE_OP_GRAPH_CACHE);
-    // If op not support dynamic shape, op will select static opinfo, update graph dynamic attr
-    bool is_dynamic_shape =
-      op_run_info->base_op_run_info.has_dynamic_output || op_run_info->base_op_run_info.has_dynamic_input;
-    if (is_dynamic_shape) {
-      const auto &graph = op_compiler_info->graph_;
-      MS_EXCEPTION_IF_NULL(graph);
-      graph->UpdateGraphDynamicAttr();
-      // Dynamic shape but select static op, must no cache
-      if (!graph->is_dynamic_shape()) {
-        enable_cache = false;
-      }
-    }
     op_compiler_info->need_erase_ = !enable_cache;
   } else {
     auto input_nodes = graph->input_nodes();
