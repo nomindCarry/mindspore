@@ -604,7 +604,7 @@ void GraphCompiler::GetSingleOpRunInfoAndGraphInfo(const CNodePtr &kernel, const
                                                    const GraphOutputInfo *const graph_output_info) {
   MS_EXCEPTION_IF_NULL(session_);
   MS_EXCEPTION_IF_NULL(graph_info);
-  session_->GetSingleOpGraphInfo(kernel, tensor_info, graph_info);
+  session_->GetSingleOpGraphInfo(kernel, tensor_info, graph_info, *op_run_info);
   *op_run_info = session_->GetSingleOpRunInfo(kernel, *graph_info, tensor_info, graph_output_info);
 }
 
