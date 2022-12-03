@@ -57,40 +57,6 @@ void SetGpuRefMapToKernelInfo(const CNodePtr &apply_kernel, const std::vector<ke
 }
 }  // namespace
 
-void InitAndResizeWithoutParameterInput(const CNodePtr &kernel,
-                                        std::shared_ptr<kernel::NativeGpuKernelMod> gpu_kernel_mod,
-                                        kernel::KernelArgs args,
-                                        std::map<uint32_t, tensor::TensorPtr> inputs_tensor_map) {
-  MS_EXCEPTION_IF_NULL(gpu_kernel_mod);
-  if (!gpu_kernel_mod->Init(args.op, args.inputs, args.outputs)) {
-    MS_LOG(EXCEPTION) << "Initialize gpu kernel op[" << kernel->fullname_with_scope() << "] failed.";
-  }
-  MS_EXCEPTION_IF_NULL(kernel);
-  MS_EXCEPTION_IF_NULL(kernel->input(0));
-  if (!AnfAlgo::NodeValueIsFuncGraph(kernel->input(0))) {
-    const auto &depend_list = abstract::GetValueDependArgIndices(kernel);
-    if (!depend_list.empty()) {
-      auto input_size = common::AnfAlgo::GetInputTensorNum(kernel);
-      for (size_t i = 0; i < input_size; ++i) {
-        if (depend_list.find(i) == depend_list.end()) {
-          continue;
-        }
-        auto input_node_with_index = common::AnfAlgo::GetPrevNodeOutput(kernel, i, false);
-        auto real_input = input_node_with_index.first;
-        // Inverse op have constant input need RunGraphBySingleOp
-        if (real_input->isa<Parameter>()) {
-          MS_LOG(DEBUG) << "Set Node Attr is Dynamic Shape";
-          common::AnfAlgo::SetNodeAttr(mindspore::kAttrOutputIsDynamicShape, MakeValue(true), kernel);
-          kernel->func_graph()->cast<KernelGraphPtr>()->SetGraphDynamicAttr(true);
-          return;
-        }
-      }
-    }
-  }
-  if (gpu_kernel_mod->Resize(args.op, args.inputs, args.outputs, inputs_tensor_map) == kernel::KRET_RESIZE_FAILED) {
-    MS_LOG(EXCEPTION) << "gpu kernel op[" << kernel->fullname_with_scope() << "] Resize failed.";
-  }
-}
 void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
   kernel::KernelMeta *bin_map = kernel::KernelMeta::GetInstance();
   MS_EXCEPTION_IF_NULL(bin_map);
@@ -160,7 +126,7 @@ void CreateGPUKernel(const std::vector<CNodePtr> &kernels) {
         auto device_id = ms_context->get_param<uint32_t>(MS_CTX_DEVICE_ID);
         gpu_kernel_mod->SetDevicedId(device_id);
 
-        InitAndResizeWithoutParameterInput(kernel, gpu_kernel_mod, args, inputs_tensor_map);
+        kernel::InitAndResizeWithoutParameterInput(kernel, gpu_kernel_mod, args, inputs_tensor_map);
 
         session::AnfRuntimeAlgorithm::SetKernelMod(gpu_kernel_mod, kernel.get());
       }

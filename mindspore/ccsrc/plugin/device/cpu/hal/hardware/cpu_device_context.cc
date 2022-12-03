@@ -308,42 +308,6 @@ void CPUKernelExecutor::SetOperatorInfo(const KernelGraphPtr &graph) const {
   }
 #endif
 }
-
-void InitAndResizeWithoutParameterInput(const CNodePtr &node, std::shared_ptr<kernel::NativeCpuKernelMod> cpu_kernel,
-                                        kernel::KernelArgs args,
-                                        std::map<uint32_t, tensor::TensorPtr> inputs_tensor_map) {
-  MS_EXCEPTION_IF_NULL(cpu_kernel);
-  auto ret = cpu_kernel->Init(args.op, args.inputs, args.outputs);
-  if (!ret) {
-    MS_LOG(EXCEPTION) << trace::DumpSourceLines(node);
-  }
-  MS_EXCEPTION_IF_NULL(node);
-  MS_EXCEPTION_IF_NULL(node->input(0));
-  if (!AnfAlgo::NodeValueIsFuncGraph(node->input(0))) {
-    const auto &depend_list = abstract::GetValueDependArgIndices(node);
-    if (!depend_list.empty()) {
-      auto input_size = common::AnfAlgo::GetInputTensorNum(node);
-      for (size_t i = 0; i < input_size; ++i) {
-        if (depend_list.find(i) == depend_list.end()) {
-          continue;
-        }
-        auto input_node_with_index = common::AnfAlgo::GetPrevNodeOutput(node, i, false);
-        auto real_input = input_node_with_index.first;
-        // Inverse op have constant input need RunGraphBySingleOp
-        if (real_input->isa<Parameter>()) {
-          MS_LOG(DEBUG) << "Set Node Attr is Dynamic Shape";
-          common::AnfAlgo::SetNodeAttr(mindspore::kAttrOutputIsDynamicShape, MakeValue(true), node);
-          node->func_graph()->cast<KernelGraphPtr>()->SetGraphDynamicAttr(true);
-          return;
-        }
-      }
-    }
-  }
-  if (cpu_kernel->Resize(args.op, args.inputs, args.outputs, inputs_tensor_map) == kernel::KRET_RESIZE_FAILED) {
-    MS_LOG(EXCEPTION) << "CPU kernel op [" << node->fullname_with_scope() << "] Resize failed.";
-  }
-}
-
 void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
   SetKernelInfoBeforeCreateKernel(nodes);
 
@@ -389,7 +353,7 @@ void CPUKernelExecutor::CreateKernel(const std::vector<CNodePtr> &nodes) const {
       auto thread_pool = kernel::GetActorMgrInnerThreadPool();
       cpu_kernel->SetThreadPool(thread_pool);
 
-      InitAndResizeWithoutParameterInput(node, cpu_kernel, args, inputs_tensor_map);
+      kernel::InitAndResizeWithoutParameterInput(node, cpu_kernel, args, inputs_tensor_map);
 
       AnfAlgo::SetKernelMod(cpu_kernel, node.get());
     }
