@@ -21,6 +21,7 @@
 #include "plugin/device/cpu/kernel/nnacl/fp32/adam_fp32.h"
 #include "plugin/device/cpu/hal/device/cpu_device_address.h"
 #include "utils/ms_utils.h"
+#include "plugin/device/gpu/kernel/cuda_impl/cuda_ops/complex.h"
 
 namespace mindspore {
 namespace kernel {
@@ -40,7 +41,10 @@ constexpr size_t kIndexEpsilon = 8;
 constexpr size_t kIndexGrad = 9;
 constexpr float kAdamBlock = 1000;
 }  // namespace
-
+std::set<TypeId> num_type = {kNumberTypeInt8,      kNumberTypeInt16,   kNumberTypeInt32,   kNumberTypeInt64,
+                             kNumberTypeUInt8,     kNumberTypeUInt16,  kNumberTypeUInt32,  kNumberTypeUInt64,
+                             kNumberTypeFloat16,   kNumberTypeFloat32, kNumberTypeFloat64, kNumberTypeComplex64,
+                             kNumberTypeComplex128};
 template <typename T>
 void AdamCpuKernelMod::LaunchAdam(const std::vector<kernel::AddressPtr> &inputs,
                                   const std::vector<kernel::AddressPtr> &) {
@@ -205,7 +209,7 @@ bool AdamCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &input
                       << inputs[kIndexV]->size << " and 'var': " << inputs[kIndexVar]->size;
   }
 
-  size_t f_size = sizeof(float) * batch_size_;
+  size_t f_size = sizeof(T) * batch_size_;
   if (inputs[kIndexBeta1Power]->size != f_size) {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', the 'beta1_power' must be float, but got 'beta1_power': " << inputs[kIndexBeta1Power];
@@ -229,19 +233,35 @@ bool AdamCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &input
     MS_LOG(EXCEPTION) << "For '" << kernel_name_
                       << "', the 'epsilon' must be float, but got 'epsilon': " << inputs[kIndexEpsilon];
   }
-
+  auto iter = num_type.find(dtype_);
+  if (iter == num_type.end()) {
+    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dtype of 'var' is " << TypeIdToType(dtype_)->ToString()
+                      << " which is unsupported";
+  }
   if (dtype_ == kNumberTypeFloat32) {
     LaunchAdamNnacl(inputs, outputs);
-  } else if (dtype_ == kNumberTypeFloat16) {
-    LaunchAdam<float16>(inputs, outputs);
   } else {
-    MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dtype of 'var' must be Float16 or Float32, but got "
-                      << TypeIdToType(dtype_)->ToString();
+    LaunchAdam<T>(inputs, outputs);
   }
   return true;
 }
 
 std::vector<std::pair<KernelAttr, AdamCpuKernelMod::AdamFunc>> AdamCpuKernelMod::func_list_ = {
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddInputAttr(kNumberTypeFloat64)
+     .AddOutputAttr(kNumberTypeFloat64)
+     .AddOutputAttr(kNumberTypeFloat64)
+     .AddOutputAttr(kNumberTypeFloat64),
+   &AdamCpuKernelMod::LaunchKernel<double>},
   {KernelAttr()
      .AddInputAttr(kNumberTypeFloat32)
      .AddInputAttr(kNumberTypeFloat32)
@@ -256,6 +276,171 @@ std::vector<std::pair<KernelAttr, AdamCpuKernelMod::AdamFunc>> AdamCpuKernelMod:
      .AddOutputAttr(kNumberTypeFloat32)
      .AddOutputAttr(kNumberTypeFloat32)
      .AddOutputAttr(kNumberTypeFloat32),
+   &AdamCpuKernelMod::LaunchKernel<float>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16),
+   &AdamCpuKernelMod::LaunchKernel<float16>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddInputAttr(kNumberTypeInt64)
+     .AddOutputAttr(kNumberTypeInt64)
+     .AddOutputAttr(kNumberTypeInt64)
+     .AddOutputAttr(kNumberTypeInt64),
+   &AdamCpuKernelMod::LaunchKernel<int64_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddInputAttr(kNumberTypeInt32)
+     .AddOutputAttr(kNumberTypeInt32)
+     .AddOutputAttr(kNumberTypeInt32)
+     .AddOutputAttr(kNumberTypeInt32),
+   &AdamCpuKernelMod::LaunchKernel<int32_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddInputAttr(kNumberTypeInt16)
+     .AddOutputAttr(kNumberTypeInt16)
+     .AddOutputAttr(kNumberTypeInt16)
+     .AddOutputAttr(kNumberTypeInt16),
+   &AdamCpuKernelMod::LaunchKernel<int16_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddInputAttr(kNumberTypeInt8)
+     .AddOutputAttr(kNumberTypeInt8)
+     .AddOutputAttr(kNumberTypeInt8)
+     .AddOutputAttr(kNumberTypeInt8),
+   &AdamCpuKernelMod::LaunchKernel<int8_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddInputAttr(kNumberTypeUInt64)
+     .AddOutputAttr(kNumberTypeUInt64)
+     .AddOutputAttr(kNumberTypeUInt64)
+     .AddOutputAttr(kNumberTypeUInt64),
+   &AdamCpuKernelMod::LaunchKernel<uint64_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddInputAttr(kNumberTypeUInt32)
+     .AddOutputAttr(kNumberTypeUInt32)
+     .AddOutputAttr(kNumberTypeUInt32)
+     .AddOutputAttr(kNumberTypeUInt32),
+   &AdamCpuKernelMod::LaunchKernel<uint32_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddInputAttr(kNumberTypeUInt16)
+     .AddOutputAttr(kNumberTypeUInt16)
+     .AddOutputAttr(kNumberTypeUInt16)
+     .AddOutputAttr(kNumberTypeUInt16),
+   &AdamCpuKernelMod::LaunchKernel<uint16_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddInputAttr(kNumberTypeUInt8)
+     .AddOutputAttr(kNumberTypeUInt8)
+     .AddOutputAttr(kNumberTypeUInt8)
+     .AddOutputAttr(kNumberTypeUInt8),
+   &AdamCpuKernelMod::LaunchKernel<uint8_t>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddInputAttr(kNumberTypeComplex128)
+     .AddOutputAttr(kNumberTypeComplex128)
+     .AddOutputAttr(kNumberTypeComplex128)
+     .AddOutputAttr(kNumberTypeComplex128),
+   &AdamCpuKernelMod::LaunchKernel<double>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddInputAttr(kNumberTypeComplex64)
+     .AddOutputAttr(kNumberTypeComplex64)
+     .AddOutputAttr(kNumberTypeComplex64)
+     .AddOutputAttr(kNumberTypeComplex64),
    &AdamCpuKernelMod::LaunchKernel<float>},
 };
 
