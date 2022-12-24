@@ -1708,6 +1708,18 @@ std::set<int64_t> GetShapeSetFromResizeMap(const CNodePtr &node) {
   return res;
 }
 
+void ParameterDataSync(mindspore::AnfNodePtr real_input) {
+  MS_EXCEPTION_IF_NULL(real_input);
+  if (real_input->isa<ValueNode>()) {
+    auto value_node = real_input->cast<ValueNodePtr>();
+    auto value = value_node->value();
+    if (value->isa<tensor::Tensor>()) {
+      auto tt = value->cast<tensor::TensorPtr>();
+      tt->data_sync();
+    }
+  }
+}
+
 bool IfNeedSkipResize(const CNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   MS_EXCEPTION_IF_NULL(node->input(0));
@@ -1719,6 +1731,7 @@ bool IfNeedSkipResize(const CNodePtr &node) {
       // Inverse op have constant input need infer ,then resize
       auto shape_set = GetShapeSetFromResizeMap(node);
       if (shape_set.find(i) != shape_set.end() && real_input->isa<Parameter>()) {
+        ParameterDataSync(real_input);
         MS_LOG(DEBUG) << "Set Node Attr is Dynamic Shape";
         common::AnfAlgo::SetNodeAttr(mindspore::kAttrOutputIsDynamicShape, MakeValue(true), node);
         node->func_graph()->cast<KernelGraphPtr>()->SetGraphDynamicAttr(true);
