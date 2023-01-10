@@ -23,6 +23,7 @@
 #include "runtime/pynative/op_executor.h"
 #include "runtime/pynative/op_runtime_info.h"
 #include "runtime/device/device_address_utils.h"
+#include "include/common/utils/scoped_long_running.h"
 
 namespace mindspore {
 using runtime::DeviceAddressUtils;
@@ -57,6 +58,18 @@ OpCompiler &OpCompiler::GetInstance() {
   return instance;
 }
 
+void OpCompiler::RunFinishAddPool(const OpCompilerInfoPtr &op_compiler_info, const GraphInfo &graph_info) {
+  {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    auto iter_pool = op_compiler_infos_pool_.find(graph_info);
+    if (iter_pool != op_compiler_infos_pool_.end()) {
+      iter_pool->second.emplace_back(op_compiler_info);
+    } else {
+      op_compiler_infos_pool_[graph_info] = {op_compiler_info};
+    }
+  }
+}
+
 OpCompilerInfoPtr OpCompiler::Compile(const session::BackendOpRunInfoPtr &op_run_info, bool *single_op_cache_hit,
                                       device::DeviceContext *device_context) {
   MS_EXCEPTION_IF_NULL(op_run_info);
@@ -64,13 +77,24 @@ OpCompilerInfoPtr OpCompiler::Compile(const session::BackendOpRunInfoPtr &op_run
   py::gil_scoped_acquire acquire_gil;
   auto graph_info = op_run_info->base_op_run_info.graph_info;
   auto iter = op_compiler_infos_.find(graph_info);
-  // Check if the graph cache exists.
   auto &op_executor = runtime::OpExecutor::GetInstance();
-  if (iter != op_compiler_infos_.end() && op_executor.BuildQueueEmpty()) {
-    const auto &op_compiler_info = iter->second;
-    MS_EXCEPTION_IF_NULL(op_compiler_info);
-    *single_op_cache_hit = true;
-    return iter->second;
+  if (iter != op_compiler_infos_.end() && op_executor.BuildInQueue(iter->second->graph_id_)) {
+    op_executor.Wait();
+  }
+  {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    auto iter_pool = op_compiler_infos_pool_.find(graph_info);
+    // Check if the graph cache exists.
+//  auto &op_executor = runtime::OpExecutor::GetInstance();
+    if (iter_pool != op_compiler_infos_pool_.end()) {
+      auto pool = iter_pool->second;
+      if (!pool.empty()) {
+        auto op_compiler_info_pool = *(iter_pool->second.end() - 1);
+        iter_pool->second.pop_back();
+        *single_op_cache_hit = true;
+        return op_compiler_info_pool;
+      }
+    }
   }
   *single_op_cache_hit = false;
   // Generate kernel graph.
@@ -114,6 +138,7 @@ OpCompilerInfoPtr OpCompiler::Compile(const session::BackendOpRunInfoPtr &op_run
     std::make_shared<OpCompilerInfo>(graph_info, graph->graph_id(), graph, outputs_with_index, device_context, false);
 
   op_compiler_infos_[graph_info] = op_compiler_info;
+//  op_compiler_infos_pool_[graph_info].emplace_back(op_compiler_info);
   return op_compiler_info;
 }
 
@@ -135,8 +160,19 @@ void OpCompiler::BatchBuild(const std::vector<KernelGraphPtr> &graphs, const Dev
   }
 }
 
-void OpCompiler::ClearOpCache(const GraphInfo &graph_info) { (void)op_compiler_infos_.erase(graph_info); }
+void OpCompiler::ClearOpCache(const GraphInfo &graph_info) {
+  (void)op_compiler_infos_.erase(graph_info);
+  {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    (void)op_compiler_infos_pool_.erase(graph_info);
+  }
+}
 
-void OpCompiler::ClearAllCache() { op_compiler_infos_.clear(); }
+void OpCompiler::ClearAllCache() { op_compiler_infos_.clear();
+  {
+    std::unique_lock<std::mutex> lock(pool_mutex_);
+    op_compiler_infos_pool_.clear();
+  }
+}
 }  // namespace pynative
 }  // namespace mindspore

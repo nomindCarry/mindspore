@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <vector>
 
 #ifndef MINDSPORE_MINDSPORE_CCSRC_RUNTIME_GRAPH_SCHEDULER_COMMON_UTILS_H_
 #define MINDSPORE_MINDSPORE_CCSRC_RUNTIME_GRAPH_SCHEDULER_COMMON_UTILS_H_
@@ -38,6 +39,10 @@ class DeviceAddressUtils {
   static void UpdateDeviceAddress(const session::AnfWithOutIndex &cur_pair,
                                   const session::AnfWithOutIndex &origin_pair);
   static void UpdateDeviceAddressForRefNode(const KernelGraphPtr &graph);
+
+  static void CreateKernelOutputDeviceAddressDynamic(const DeviceContext *device_context, const KernelGraphPtr &graph,
+                                                     const std::vector<session::KernelWithIndex> &output_nodes,
+                                                     const abstract::AbstractBasePtr &out_abstract);
 };
 }  // namespace runtime
 }  // namespace mindspore

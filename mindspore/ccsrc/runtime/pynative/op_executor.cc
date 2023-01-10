@@ -102,4 +102,11 @@ void OpExecutor::WorkerJoin() {
   Wait();
   async_queue_.WorkerJoin();
 }
+
+bool OpExecutor::BuildInQueue(GraphId graph_id) {
+  return std::any_of(op_build_tasks_.begin(), op_build_tasks_.end(),
+                     [=](const std::shared_ptr<pynative::BackendOpBuildTask> &backend_op_build_task) {
+                       return backend_op_build_task->context()->graph_id() == graph_id;
+                     });
+}
 }  // namespace mindspore::runtime

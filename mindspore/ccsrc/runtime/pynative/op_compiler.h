@@ -47,7 +47,7 @@ struct OpCompilerInfo {
   bool need_erase_;
 };
 using OpCompilerInfoPtr = std::shared_ptr<OpCompilerInfo>;
-
+using OpCompilerInfoPtrList = std::vector<std::shared_ptr<OpCompilerInfo>>;
 // FuncGraph, Backend and GraphCompiler correspond one-to-one,
 // and GraphCompiler stores the compilation cache of operators.
 // When the graph structure changes, the front-end will send multiple graphs,
@@ -72,6 +72,8 @@ class BACKEND_EXPORT OpCompiler {
   // Clear anf resources before process exit.
   void ClearAllCache();
 
+  void RunFinishAddPool(const OpCompilerInfoPtr &op_compiler_info, const GraphInfo &graph_info);
+
  private:
   OpCompiler();
   ~OpCompiler() = default;
@@ -79,7 +81,9 @@ class BACKEND_EXPORT OpCompiler {
 
   // All operators shared the same session.
   session::SessionPtr session_;
+  std::mutex pool_mutex_;
   mindspore::HashMap<GraphInfo, OpCompilerInfoPtr> op_compiler_infos_;
+  mindspore::HashMap<GraphInfo, OpCompilerInfoPtrList> op_compiler_infos_pool_;
 };
 }  // namespace pynative
 using OpCompilerInfoPtr = pynative::OpCompilerInfoPtr;

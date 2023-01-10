@@ -289,6 +289,43 @@ void DeviceAddressUtils::CreateKernelOutputDeviceAddress(const DeviceContext *de
   }
 }
 
+void DeviceAddressUtils::CreateKernelOutputDeviceAddressDynamic(
+  const DeviceContext *device_context, const KernelGraphPtr &graph,
+  const std::vector<session::KernelWithIndex> &output_nodes, const abstract::AbstractBasePtr &out_abstract) {
+  MS_EXCEPTION_IF_NULL(device_context);
+  MS_EXCEPTION_IF_NULL(graph);
+  MS_EXCEPTION_IF_NULL(out_abstract);
+  for (size_t i = 0; i < output_nodes.size(); ++i) {
+    auto output_node = output_nodes[i].first;
+    auto index = output_nodes[i].second;
+
+    auto real_abstract = out_abstract;
+    if (out_abstract->isa<abstract::AbstractTuple>()) {
+      auto abstract_tuple = out_abstract->cast<abstract::AbstractTuplePtr>();
+      if (index >= abstract_tuple->elements().size()) {
+        MS_LOG(EXCEPTION) << "abstract_tuple size is " << abstract_tuple->elements().size() << " ,but get index is"
+                          << index;
+      }
+      real_abstract = abstract_tuple->elements()[index];
+    }
+    auto output_shape_ptr = real_abstract->BuildShape();
+    MS_EXCEPTION_IF_NULL(output_shape_ptr);
+    auto shape_vector = output_shape_ptr->cast<abstract::ShapePtr>();
+    MS_EXCEPTION_IF_NULL(shape_vector);
+    auto shape = shape_vector->shape();
+
+    auto address_size = AnfAlgo::GetOutputTensorMemSizeByAbstract(output_node, index, real_abstract);
+
+    auto output_format = AnfAlgo::GetOutputFormat(output_node, index);
+    auto output_type = AnfAlgo::GetOutputDeviceDataType(output_node, index);
+    auto device_address = device_context->device_res_manager_->CreateDeviceAddress(nullptr, address_size, output_format,
+                                                                                   output_type, shape);
+    MS_LOG(DEBUG) << "Create addr for node:" << common::AnfAlgo::GetNodeDebugString(output_node)
+                  << " addr:" << device_address;
+    AnfAlgo::SetOutputAddr(device_address, index, output_node.get());
+  }
+}
+
 void DeviceAddressUtils::CreateKernelWorkspaceDeviceAddress(const DeviceContext *device_context,
                                                             const KernelGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(device_context);

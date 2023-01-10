@@ -325,6 +325,38 @@ size_t AnfRuntimeAlgorithm::GetOutputTensorMemSize(const AnfNodePtr &node, size_
   return tensor_size;
 }
 
+size_t AnfRuntimeAlgorithm::GetOutputTensorMemSizeByAbstract(const AnfNodePtr &node, size_t output_index,
+                                                             const abstract::AbstractBasePtr &out_abstract) {
+  MS_EXCEPTION_IF_NULL(node);
+  if (output_index >= AnfAlgo::GetOutputTensorNum(node)) {
+    MS_EXCEPTION(ArgumentError) << "output index [" << output_index << "] large than the output size ["
+                                << AnfAlgo::GetOutputTensorNum(node) << "] of node!";
+  }
+  TypeId output_type_id = AnfAlgo::GetOutputDeviceDataType(node, output_index);
+  if (output_type_id == kTypeUnknown) {
+    output_type_id = common::AnfAlgo::GetOutputInferDataType(node, output_index);
+  }
+  size_t type_size = GetTypeByte(TypeIdToType(output_type_id));
+
+  auto output_shape_ptr = out_abstract->BuildShape();
+  MS_EXCEPTION_IF_NULL(output_shape_ptr);
+  auto shape_vector = output_shape_ptr->cast<abstract::ShapePtr>();
+  MS_EXCEPTION_IF_NULL(shape_vector);
+  auto shape = shape_vector->shape();
+  if (IsDynamic(shape)) {
+    MS_LOG(EXCEPTION) << "The shape is " << shape << " dynamic shape , can not get OutputTensorMemSize";
+  }
+  auto format = AnfAlgo::GetOutputFormat(node, output_index);
+  auto dtype = AnfAlgo::GetOutputDeviceDataType(node, output_index);
+  if (shape.empty() && format != kOpFormat_DEFAULT) {
+    shape = trans::PaddingShape(shape, format, AnfAlgo::GetOutputReshapeType(node, output_index), node);
+    shape = trans::TransShapeToDevice(shape, format, node, output_index, dtype);
+  }
+  // scalar's output shape is a empty vector
+  size_t tensor_size = type_size * SizeOf(shape);
+  return tensor_size;
+}
+
 std::vector<std::string> AnfRuntimeAlgorithm::GetAllOutputFormats(const AnfNodePtr &node) {
   MS_EXCEPTION_IF_NULL(node);
   if (!AnfUtils::IsRealKernel(node)) {

@@ -606,6 +606,54 @@ TensorPtr CreateOutputTensor(const AnfNodePtr &output_node, size_t output_index)
 
   return tensor;
 }
+
+TensorPtr CreateOutputTensorDynamic(const AnfNodePtr &output_node, size_t output_index,
+                                    const abstract::AbstractBasePtr &out_abstract) {
+  MS_EXCEPTION_IF_NULL(output_node);
+  const auto &abstract = common::AnfAlgo::GetNodeAbstractByIndex(output_node, output_index);
+  if (abstract != nullptr && abstract->isa<abstract::AbstractMapTensor>()) {
+    return CreateOutputMapTensor(output_node, output_index);
+  }
+  // Create host tensor, the output tensor should use the infer type, it will be handed correctly by tensor data sync
+  // when infer type is not equal to device type.
+  auto type_id = common::AnfAlgo::GetOutputInferDataType(output_node, output_index);
+
+  ShapeVector shape;
+  auto op_run_info_abstract = out_abstract;
+  if (out_abstract->isa<abstract::AbstractTuple>()) {
+    auto abstract_tuple = out_abstract->cast<abstract::AbstractTuplePtr>();
+    if (output_index >= abstract_tuple->elements().size()) {
+      MS_LOG(EXCEPTION) << "abstract_tuple size is " << abstract_tuple->elements().size() << " ,but get index is"
+                        << output_index;
+    }
+    op_run_info_abstract = abstract_tuple->elements()[output_index];
+  }
+  auto output_shape_ptr = op_run_info_abstract->BuildShape();
+  MS_EXCEPTION_IF_NULL(output_shape_ptr);
+  auto shape_vector = output_shape_ptr->cast<abstract::ShapePtr>();
+  MS_EXCEPTION_IF_NULL(shape_vector);
+  shape = shape_vector->shape();
+
+  auto tensor = std::make_shared<tensor::Tensor>(type_id, shape);
+  tensor->set_padding_type(AnfAlgo::GetOutputReshapeType(output_node, output_index));
+
+  // Put device tensor into host tensor.
+  const auto &device_tensor = AnfAlgo::GetMutableOutputAddr(output_node, output_index, false);
+  MS_EXCEPTION_IF_NULL(device_tensor);
+  device_tensor->SetNodeIndex(output_node, output_index);
+  tensor->set_device_address(device_tensor);
+
+  // MindRT is disabled in the multi graphs scenario
+  // Delete tensor->data_sync() when MindRT is enabled in all scenes.
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  if (ms_context->get_param<int>(MS_CTX_EXECUTION_MODE) != kPynativeMode) {
+    // If execution mode is Graph Mode in MsContext, the tensor will be the input of graph which will execute in Graph
+    // Mode, if the graph contain no CNode after optimization, the tensor need sync to host.
+    tensor->data_sync(false);
+  }
+  return tensor;
+}
 }  // namespace
 
 void MindRTBackend::RunGraphByActors(const ActorInfo &actor_info, const GraphCompilerInfo &graph_compiler_info,
@@ -875,7 +923,8 @@ void MindRTBackend::OpRunCallback(const std::shared_ptr<pynative::OpTaskContext>
   bool use_dynamic_shape_process = context->op_run_info()->base_op_run_info.use_dynamic_shape_process;
   if (use_dynamic_shape_process) {
     runtime::RunSingleOpGraphDynamic(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
-                                     context->device_context(), context->op_run_info()->is_gradient_out);
+                                     context->device_context(), context->op_run_info()->is_gradient_out,
+                                     context->op_run_info()->base_op_run_info.abstract);
   } else {
     runtime::RunSingleOpGraph(context->graph(), GetTensorWithoutValueMask(context->op_run_info()),
                               context->device_context());
@@ -951,7 +1000,11 @@ void MindRTBackend::DispatchOpTask(bool single_op_cache_hit, VectorRef *outputs,
 
   runtime::UpdateDeviceAddress(graph, GetTensorWithoutValueMask(op_run_info), op_compiler_info->device_context_);
   // Create output tensor
-  UpdateOutput(output_nodes, outputs);
+  if (op_run_info->base_op_run_info.use_dynamic_shape_process) {
+    UpdateOutputDynamic(output_nodes, outputs, op_run_info->base_op_run_info.abstract);
+  } else {
+    UpdateOutput(output_nodes, outputs);
+  }
 
   auto ms_context = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(ms_context);
@@ -969,8 +1022,11 @@ void MindRTBackend::DispatchOpTask(bool single_op_cache_hit, VectorRef *outputs,
   } else {
     promise.set_value(true);
   }
+  auto graph_info = op_run_info->base_op_run_info.graph_info;
   op_executor.PushOpRunTask(std::make_shared<pynative::BackendOpRunTask>(
-    run_op_context, [this](const std::shared_ptr<pynative::OpTaskContext> &ctx) { OpRunCallback(ctx); },
+    run_op_context, [this,op_compiler_info,graph_info](const std::shared_ptr<pynative::OpTaskContext> &ctx) { OpRunCallback(ctx);
+              pynative::OpCompiler::GetInstance().RunFinishAddPool(op_compiler_info,graph_info);
+      },
     std::move(future)));
 
   op_executor.Register([this]() { BatchBuildCallback(); });
@@ -1044,6 +1100,21 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
   auto device_context = op_compiler_info->device_context_;
   auto &op_executor = runtime::OpExecutor::GetInstance();
   bool is_dynamic_shape = op_run_info->base_op_run_info.has_dynamic_output;
+
+  //  not support ascend async
+  auto device_type = device_context->GetDeviceType();
+  if (device_type != device::DeviceType::kAscend) {
+    auto async_exec_disabled = is_dynamic_shape || op_compiler_info->need_erase_ ||
+                               !op_run_info->base_op_run_info.lazy_build || OpInBlackList(op_run_info) ||
+                               GetExecutionMode() == kGraphMode || EnablePyNativeSyncRunning();
+    if (!async_exec_disabled) {
+      MS_LOG(DEBUG) << "Async exec enabled, op: " << op_run_info->base_op_run_info.op_name;
+      runtime::DeviceAddressUtils::CreateKernelOutputDeviceAddressDynamic(device_context, graph, output_nodes,
+                                                                          op_run_info->base_op_run_info.abstract);
+      DispatchOpTask(single_op_cache_hit, outputs, op_compiler_info, op_run_info);
+      return;
+    }
+  }
   MS_LOG(DEBUG) << "Async exec disabled, op: " << op_run_info->base_op_run_info.op_name;
   if (!op_executor.RunQueueEmpty()) {
     WaitTaskFinish();
@@ -1053,7 +1124,8 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
   }
   const auto &tensors_without_value_mask = GetTensorWithoutValueMask(op_run_info);
   runtime::UpdateDeviceAddress(graph, tensors_without_value_mask, device_context);
-  runtime::RunSingleOpGraphDynamic(graph, tensors_without_value_mask, device_context, op_run_info->is_gradient_out);
+  runtime::RunSingleOpGraphDynamic(graph, tensors_without_value_mask, device_context, op_run_info->is_gradient_out,
+                                   op_run_info->base_op_run_info.abstract);
 
   if (!op_run_info->is_infer) {
     ReleaseForwardOutput(op_run_info->base_op_run_info.input_tensor);
@@ -1064,8 +1136,10 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
   if (is_dynamic_shape) {
     UpdateOutputAbstract(*outputs, op_run_info);
   }
+  auto graph_info = op_run_info->base_op_run_info.graph_info;
+  pynative::OpCompiler::GetInstance().RunFinishAddPool(op_compiler_info,graph_info);
   if (op_compiler_info->need_erase_) {
-    EraseSingleOpCache(op_run_info->base_op_run_info.graph_info);
+    EraseSingleOpCache(graph_info);
   }
 }
 
@@ -1112,9 +1186,9 @@ void MindRTBackend::RunOpDynamic(const session::BackendOpRunInfoPtr &op_run_info
   auto op_compiler_info =
     pynative::OpCompiler::GetInstance().Compile(op_run_info, &single_op_cache_hit, device_context);
   MS_EXCEPTION_IF_NULL(op_compiler_info);
-  if (runtime::OpExecutor::GetInstance().ActorInQueue(op_compiler_info->graph_id_)) {
-    WaitTaskFinish();
-  }
+//  if (runtime::OpExecutor::GetInstance().ActorInQueue(op_compiler_info->graph_id_)) {
+//    WaitTaskFinish();
+//  }
 
   const auto &graph = op_compiler_info->graph_;
   MS_EXCEPTION_IF_NULL(graph);
@@ -1145,6 +1219,21 @@ void MindRTBackend::UpdateOutput(const std::vector<session::KernelWithIndex> &ou
       continue;
     }
     auto output_tensor = CreateOutputTensor(item_with_index.first, item_with_index.second);
+    MS_EXCEPTION_IF_NULL(output_tensor);
+    output_tensor->set_lazy_callback([]() { runtime::OpExecutor::GetInstance().Wait(); });
+    outputs->emplace_back(output_tensor);
+  }
+}
+
+void MindRTBackend::UpdateOutputDynamic(const std::vector<session::KernelWithIndex> &output_nodes,
+                                        VectorRef *const outputs, const abstract::AbstractBasePtr &out_abstract) const {
+  MS_EXCEPTION_IF_NULL(outputs);
+  for (auto &item_with_index : output_nodes) {
+    MS_EXCEPTION_IF_NULL(item_with_index.first);
+    if (AnfAlgo::GetOutputTensorNum(item_with_index.first) == 0) {
+      continue;
+    }
+    auto output_tensor = CreateOutputTensorDynamic(item_with_index.first, item_with_index.second, out_abstract);
     MS_EXCEPTION_IF_NULL(output_tensor);
     output_tensor->set_lazy_callback([]() { runtime::OpExecutor::GetInstance().Wait(); });
     outputs->emplace_back(output_tensor);

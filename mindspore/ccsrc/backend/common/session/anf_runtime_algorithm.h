@@ -53,6 +53,9 @@ class BACKEND_EXPORT AnfRuntimeAlgorithm {
   static void KeepOrder(const KernelGraphPtr &kg, const AnfNodePtr &former, const AnfNodePtr &latter);
   // Get the memory size of output tensor of node.
   static size_t GetOutputTensorMemSize(const AnfNodePtr &node, size_t output_index);
+  // Get the memory size of output tensor of node with abstract.
+  static size_t GetOutputTensorMemSizeByAbstract(const AnfNodePtr &node, size_t output_index,
+                                                 const AbstractBasePtr &out_abstract);
   // get all outputs format select of anf node
   static std::vector<std::string> GetAllOutputFormats(const AnfNodePtr &node);
   // get all inputs format select of anf node

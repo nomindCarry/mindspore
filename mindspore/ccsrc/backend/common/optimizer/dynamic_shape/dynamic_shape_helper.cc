@@ -382,6 +382,40 @@ void InferOp(const CNodePtr &cnode, void *args) {
   }
 }
 
+void SetOpArgs(const CNodePtr &cnode, void *args) {
+  MS_EXCEPTION_IF_NULL(cnode);
+  if (session::AnfRuntimeAlgorithm::GetKernelType(cnode) == KernelType::AKG_KERNEL) {
+    MS_LOG(EXCEPTION) << "Akg kernel do not support dynamic shape: " << cnode->fullname_with_scope();
+  }
+  MS_LOG(DEBUG) << "InferShape start, node:" << cnode->fullname_with_scope();
+  auto kernel_mod = AnfAlgo::GetKernelMod(cnode);
+  MS_EXCEPTION_IF_NULL(kernel_mod);
+
+  kernel::KernelArgs kernel_args;
+
+  std::set<int64_t> depend_list = abstract::GetValueDependArgIndices(cnode);
+  kernel_args.depend_tensor_map.clear();
+  auto &inputs = cnode->inputs();
+  if (inputs.empty()) {
+    MS_LOG(EXCEPTION) << "Invalid inputs.";
+  }
+
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  auto input_size = common::AnfAlgo::GetInputTensorNum(cnode);
+  bool skip_nop_node = !context->get_param<bool>(MS_CTX_ENABLE_MINDRT);
+  for (size_t i = 0; i < input_size; i++) {
+    auto input_node_with_index = common::AnfAlgo::GetPrevNodeOutput(cnode, i, false);
+    if (depend_list.find(i) != depend_list.end()) {
+      auto depended_value = GetDependValueTensor(cnode, i, input_node_with_index, skip_nop_node, args);
+      auto ret2 = kernel_args.depend_tensor_map.try_emplace(i, depended_value);
+      if (!ret2.second) {
+        MS_LOG(EXCEPTION) << "Insert map failed.";
+      }
+    }
+  }
+}
+
 CustomActorNodeManager &CustomActorNodeManager::Instance() {
   static CustomActorNodeManager instance{};
   return instance;

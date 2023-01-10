@@ -528,13 +528,17 @@ void UpdateKernelWorkspace(const CNodePtr &kernel) {
 
 // kernel_mode launch
 void LaunchKernelsDynamic(const KernelGraphPtr &graph, const device::DeviceContext *device_context,
-                          bool is_gradient_out) {
+                          bool is_gradient_out, const abstract::AbstractBasePtr abstract) {
   MS_EXCEPTION_IF_NULL(graph);
   MS_EXCEPTION_IF_NULL(device_context);
   MS_LOG(DEBUG) << "Start";
 
   // Get device address from OpRuntimeInfo
   const auto &execution_order = graph->execution_order();
+  auto skip_infer = true;
+  if (execution_order.size() > 1) {
+    skip_infer = false;
+  }
   for (auto const &node : execution_order) {
     MS_EXCEPTION_IF_NULL(node);
     MS_LOG(INFO) << "Start launch kernel " << node->fullname_with_scope() << " kernel type "
@@ -548,7 +552,13 @@ void LaunchKernelsDynamic(const KernelGraphPtr &graph, const device::DeviceConte
     }
     auto inputs = CreateKernelInputAddress(runtime_info);
 
-    InferNodeRealShape(node);
+    if (!skip_infer || abstract->BuildShape()->IsDynamic()) {
+      InferNodeRealShape(node);
+    } else {
+      node->set_abstract(abstract);
+      opt::dynamic_shape::SetOpArgs(node);
+    }
+
 
     runtime::DeviceAddressUtils::CreateKernelOutputDeviceAddress(device_context, graph, is_gradient_out);
     runtime::DeviceAddressUtils::UpdateDeviceAddressForInplaceNode(graph);
@@ -670,10 +680,11 @@ void RunSingleOpGraph(const KernelGraphPtr &graph, const std::vector<tensor::Ten
 }
 
 void RunSingleOpGraphDynamic(const KernelGraphPtr &graph, const std::vector<tensor::TensorPtr> &input_tensors,
-                             const device::DeviceContext *device_context, bool is_gradient_out) {
+                             const device::DeviceContext *device_context, bool is_gradient_out,
+                             const abstract::AbstractBasePtr abstract) {
   WaitCommunicationFinish(input_tensors);
   CopyDataToDevice(graph, input_tensors, device_context);
-  LaunchKernelsDynamic(graph, device_context, is_gradient_out);
+  LaunchKernelsDynamic(graph, device_context, is_gradient_out, abstract);
   ReleaseKernelResource(graph);
 }
 }  // namespace mindspore::runtime
