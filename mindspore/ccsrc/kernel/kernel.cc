@@ -302,8 +302,8 @@ int KernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<Ke
   input_shapes_.clear();
   for (auto &input : inputs) {
     size_t tensor_size = 0;
-    size_t type_size = GetTypeByte(TypeIdToType(input->GetDtype()));
     MS_EXCEPTION_IF_NULL(input);
+    size_t type_size = GetTypeByte(TypeIdToType(input->GetDtype()));
     auto shape = input->GetShapeVector();
     if (!IsValidShape(shape)) {
       // early stop if any input shape contains -1/-2, which means input shape is dynamic
@@ -320,8 +320,8 @@ int KernelMod::Resize(const BaseOperatorPtr &base_operator, const std::vector<Ke
   output_size_list_.clear();
   for (auto &output : outputs) {
     size_t tensor_size = 0;
-    size_t type_size = GetTypeByte(TypeIdToType(output->GetDtype()));
     MS_EXCEPTION_IF_NULL(output);
+    size_t type_size = GetTypeByte(TypeIdToType(output->GetDtype()));
     auto shape = output->GetShapeVector();
     if (!IsValidShape(shape)) {
       // Note:
