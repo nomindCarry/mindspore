@@ -241,7 +241,8 @@ bool AdamCpuKernelMod::LaunchKernel(const std::vector<kernel::AddressPtr> &input
   if (dtype_ == kNumberTypeFloat32) {
     LaunchAdamNnacl(inputs, outputs);
   } else if (dtype_ == kNumberTypeFloat16) {
-    LaunchAdam<float16>(inputs, outputs);
+    LaunchAdamNnacl(inputs, outputs);
+    //LaunchAdam<float16>(inputs, outputs);
   } else {
     MS_LOG(EXCEPTION) << "For '" << kernel_name_ << "', the dtype of 'var' must be Float16 or Float32, but got "
                       << TypeIdToType(dtype_)->ToString();
@@ -265,6 +266,21 @@ std::vector<std::pair<KernelAttr, AdamCpuKernelMod::AdamFunc>> AdamCpuKernelMod:
      .AddOutputAttr(kNumberTypeFloat32)
      .AddOutputAttr(kNumberTypeFloat32),
    &AdamCpuKernelMod::LaunchKernel<float>},
+  {KernelAttr()
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddInputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16)
+     .AddOutputAttr(kNumberTypeFloat16),
+    &AdamCpuKernelMod::LaunchKernel<float16>},
 };
 
 std::vector<KernelAttr> AdamCpuKernelMod::GetOpSupport() {
