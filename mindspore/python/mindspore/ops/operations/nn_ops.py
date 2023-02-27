@@ -4675,6 +4675,9 @@ class Adam(Primitive):
     @prim_attr_register
     def __init__(self, use_locking=False, use_nesterov=False):
         """Initialize Adam."""
+        self.init_prim_io_names(inputs=['var', 'm', 'v', 'beta1_power', 'beta2_power', 'lr', 'beta1', 'beta2',
+                                        'epsilon', 'gradient'],
+                                outputs=['var', 'm', 'v'])
         validator.check_value_type("use_locking", use_locking, [bool], self.name)
         validator.check_value_type("use_nesterov", use_nesterov, [bool], self.name)
         self.add_prim_attr('side_effect_mem', True)
