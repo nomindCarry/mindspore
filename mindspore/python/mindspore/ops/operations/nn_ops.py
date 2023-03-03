@@ -4583,11 +4583,11 @@ class Adam(Primitive):
             If false, update the gradients without using NAG. Default: False.
 
     Inputs:
-        - **var** (Tensor) - Weights to be updated. The shape is :math:`(N, *)` where :math:`*` means,
+        - **var** (Parameter) - Weights to be updated. The shape is :math:`(N, *)` where :math:`*` means,
           any number of additional dimensions. The data type can be float16 or float32.
-        - **m** (Tensor) - The 1st moment vector in the updating formula,
+        - **m** (Parameter) - The 1st moment vector in the updating formula,
           the shape and data type value should be the same as `var`.
-        - **v** (Tensor) - the 2nd moment vector in the updating formula,
+        - **v** (Parameter) - the 2nd moment vector in the updating formula,
           the shape and data type value should be the same as `var`. Mean square gradients with the same type as `var`.
         - **beta1_power** (float) - :math:`beta_1^t(\beta_1^{t})` in the updating formula,
           the data type value should be the same as `var`.
