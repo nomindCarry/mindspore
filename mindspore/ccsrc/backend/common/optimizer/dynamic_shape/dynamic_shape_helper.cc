@@ -462,17 +462,35 @@ void InferShape(const CNodePtr &cnode, std::map<uint32_t, tensor::TensorPtr> *de
   opt::CppInferShape(primitive, args_spec_list, cnode);
 }
 
-void InferOp(const CNodePtr &cnode, const std::vector<device::DeviceAddressPtr> &device_address_list,
+void UpdateOutputShapeForCompileInfo(const std::vector<device::DeviceAddressPtr> &outputs_device_address,
+                                     const AbstractBasePtr &out_abstract) {
+  if (out_abstract->isa<abstract::AbstractTuple>()) {
+    auto abstract_tuple = out_abstract->cast<abstract::AbstractTuplePtr>();
+    auto num = abstract_tuple->elements().size();
+    for (size_t output_index = 0; output_index < num; ++output_index) {
+      auto real_abstract = abstract_tuple->elements()[output_index];
+      auto shape_ptr = real_abstract->BuildShape();
+      outputs_device_address[output_index]->set_host_shape(BaseShapeToShape(shape_ptr));
+    }
+  } else {
+    auto shape_ptr = out_abstract->BuildShape();
+    outputs_device_address[0]->set_host_shape(BaseShapeToShape(shape_ptr));
+  }
+}
+
+void InferOp(const CNodePtr &cnode, const pynative::ExecuteKernelInfo &execute_kernel_info,
              const std::vector<tensor::TensorPtr> &input_tensors) {
   MS_EXCEPTION_IF_NULL(cnode);
   auto kernel_mod = AnfAlgo::GetKernelMod(cnode);
   MS_EXCEPTION_IF_NULL(kernel_mod);
 
   kernel::KernelArgs kernel_args;
-  InferShape(cnode, &kernel_args.depend_tensor_map, device_address_list, input_tensors);
+  InferShape(cnode, &kernel_args.depend_tensor_map, execute_kernel_info.inputs_device_address_, input_tensors);
 
+  UpdateOutputShapeForCompileInfo(execute_kernel_info.outputs_device_address_, cnode->abstract());
   if (auto kernel_mod_type = kernel_mod->GetKernelModType(); IsCpuGpuKernelMod(kernel_mod_type)) {
-    auto update = kernel::AbstractArgsFromCNode(cnode, IsDeprecatedCpuOrGpuKernelMod(kernel_mod_type));
+    auto update =
+      kernel::AbstractArgsFromExecuteKernelInfo(execute_kernel_info, IsDeprecatedCpuOrGpuKernelMod(kernel_mod_type));
     update.depend_tensor_map = std::move(kernel_args.depend_tensor_map);
     kernel::SetInputsByDependMap(update.depend_tensor_map, &update.inputs, IsCpuKernelMod(kernel_mod_type));
     kernel::SetArgsToCNode(cnode, update);
@@ -481,9 +499,10 @@ void InferOp(const CNodePtr &cnode, const std::vector<device::DeviceAddressPtr> 
   }
 }
 
-void SetOpArgs(const CNodePtr &cnode, const std::vector<device::DeviceAddressPtr> &device_address_list,
+void SetOpArgs(const CNodePtr &cnode, const pynative::ExecuteKernelInfo &execute_kernel_info,
                const std::vector<tensor::TensorPtr> &input_tensors) {
   MS_EXCEPTION_IF_NULL(cnode);
+  UpdateOutputShapeForCompileInfo(execute_kernel_info.outputs_device_address_, cnode->abstract());
   if (session::AnfRuntimeAlgorithm::GetKernelType(cnode) == KernelType::AKG_KERNEL) {
     MS_LOG(EXCEPTION) << "Akg kernel do not support dynamic shape: " << cnode->fullname_with_scope();
   }
@@ -496,7 +515,7 @@ void SetOpArgs(const CNodePtr &cnode, const std::vector<device::DeviceAddressPtr
   auto input_size = common::AnfAlgo::GetInputTensorNum(cnode);
   for (size_t i = 0; i < input_size; i++) {
     if (depend_list.find(i) != depend_list.end()) {
-      auto depended_value = GetDependValueTensor(device_address_list, input_tensors, i);
+      auto depended_value = GetDependValueTensor(execute_kernel_info.inputs_device_address_, input_tensors, i);
       auto ret2 = kernel_args.depend_tensor_map.try_emplace(i, depended_value);
       if (!ret2.second) {
         MS_LOG(EXCEPTION) << "Insert map failed.";
@@ -505,7 +524,8 @@ void SetOpArgs(const CNodePtr &cnode, const std::vector<device::DeviceAddressPtr
   }
 
   if (auto kernel_mod_type = kernel_mod->GetKernelModType(); IsCpuGpuKernelMod(kernel_mod_type)) {
-    auto update = kernel::AbstractArgsFromCNode(cnode, IsDeprecatedCpuOrGpuKernelMod(kernel_mod_type));
+    auto update =
+      kernel::AbstractArgsFromExecuteKernelInfo(execute_kernel_info, IsDeprecatedCpuOrGpuKernelMod(kernel_mod_type));
     update.depend_tensor_map = std::move(kernel_args.depend_tensor_map);
     kernel::SetInputsByDependMap(update.depend_tensor_map, &update.inputs, IsCpuKernelMod(kernel_mod_type));
     kernel::SetArgsToCNode(cnode, update);

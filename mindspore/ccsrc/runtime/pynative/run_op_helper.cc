@@ -517,13 +517,13 @@ void InferNodeRealShape(const CNodePtr &kernel) {
   opt::InferOp(kernel);
 }
 
-void InferNodeRealShape(const CNodePtr &kernel, const std::vector<device::DeviceAddressPtr> &device_address_list,
+void InferNodeRealShape(const CNodePtr &kernel, const pynative::ExecuteKernelInfo &execute_kernel_info,
                         const std::vector<tensor::TensorPtr> &input_tensors) {
   MS_EXCEPTION_IF_NULL(kernel);
   if (session::AnfRuntimeAlgorithm::GetKernelType(kernel) == KernelType::AKG_KERNEL) {
     MS_LOG(EXCEPTION) << "Akg kernel do not support dynamic shape: " << kernel->fullname_with_scope();
   }
-  opt::dynamic_shape::InferOp(kernel, device_address_list, input_tensors);
+  opt::dynamic_shape::InferOp(kernel, execute_kernel_info, input_tensors);
 }
 
 void ResizeNodeInput(const CNodePtr &kernel) {
@@ -620,9 +620,9 @@ device::DeviceAddressPtr CreateTensorDeviceAddressWithTensorAndCachedInfo(
 }
 
 void UpdateTensorCache(const device::DeviceAddressPtr &input_device_address,
-                       const device::DeviceAddressPtr &cached_device_address, const TensorPtr &tensor) {
+                       const device::DeviceAddressPtr &cached_device_address) {
   cached_device_address->SetSize(input_device_address->GetSize());
-  cached_device_address->set_host_shape(tensor->shape());
+  cached_device_address->set_host_shape(input_device_address->host_shape());
   cached_device_address->set_ptr(input_device_address->GetMutablePtr());
 }
 
@@ -662,9 +662,14 @@ void UpdateInputInCompileInfo(const OpCompilerInfoPtr &op_compiler_info, const s
     inputs[i]->set_abstract(input_tensor->ToAbstract()->Broaden());
     auto device_sync = input_tensor->device_address();
     auto device_address = std::dynamic_pointer_cast<device::DeviceAddress>(device_sync);
+    auto op_runtime_info = inputs[i]->user_data<runtime::OpRuntimeInfo>();
+    if (op_runtime_info != nullptr) {
+      op_runtime_info->Resize(inputs[i]);
+    }
+    op_compiler_info->inputs_[i]->set_host_shape(input_tensor->shape());
     if (device_address != nullptr) {
       // Update cached input info by input tensor info
-      UpdateTensorCache(device_address, op_compiler_info->inputs_[i], input_tensor);
+      UpdateTensorCache(device_address, op_compiler_info->inputs_[i]);
     } else {
       // Create new device address using tensor and cached device address
       auto new_device_address = CreateTensorDeviceAddressWithTensorAndCachedInfo(
@@ -911,10 +916,10 @@ void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info
     std::vector<tensor::TensorPtr> tensors = GetAllInputTensor(
       execute_kernel.inputs_device_address_, address_map_to_tensor, op_compiler_info->value_map_to_tensor_);
     if (is_need_infer) {
-      InferNodeRealShape(kernel, execute_kernel.inputs_device_address_, tensors);
+      InferNodeRealShape(kernel, execute_kernel, tensors);
     } else {
       kernel->set_abstract(op_run_info->base_op_run_info.abstract);
-      opt::dynamic_shape::SetOpArgs(kernel, execute_kernel.inputs_device_address_, tensors);
+      opt::dynamic_shape::SetOpArgs(kernel, execute_kernel, tensors);
     }
 
     // Resize
@@ -942,6 +947,7 @@ void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info
 
     if (is_need_infer) {
       kernel::UpdateNodeShape(kernel);
+      opt::dynamic_shape::UpdateOutputShapeForCompileInfo(execute_kernel.outputs_device_address_, kernel->abstract());
     }
   }
 

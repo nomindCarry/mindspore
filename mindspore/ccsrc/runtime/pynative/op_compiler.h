@@ -36,6 +36,7 @@ struct ExecuteKernelInfo {
   CNodePtr kernel_;
 };
 using ExecuteKernelInfoList = std::vector<ExecuteKernelInfo>;
+using ExecuteKernelInfoPtr = std::shared_ptr<ExecuteKernelInfo>;
 
 struct OpCompilerInfo {
   OpCompilerInfo(GraphInfo graph_info, GraphId graph_id, KernelGraphPtr graph,

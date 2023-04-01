@@ -40,6 +40,7 @@
 #include "utils/trace_base.h"
 #include "mindspore/ccsrc/include/common/debug/common.h"
 #include "kernel/oplib/oplib.h"
+#include "include/backend/anf_runtime_algorithm.h"
 
 namespace mindspore {
 namespace kernel {
@@ -79,6 +80,18 @@ abstract::AbstractBasePtr GetChildAbstract(const abstract::AbstractBasePtr &cur_
   }
 
   return child_abs;
+}
+
+KernelTensorPtr CreateKernelTensorDynamic(const device::DeviceAddressPtr &device_address,
+                                          const ShapeVector &device_shape_adaptively) {
+  KernelTensorPtr res_tensor = std::make_shared<KernelTensor>();
+  // Tensor
+  auto new_abstract =
+    std::make_shared<abstract::AbstractTensor>(TypeIdToType(device_address->type_id()), device_address->host_shape());
+  TensorInfo tensor_info{GetFormatFromStrToEnum(device_address->format()), new_abstract, device_shape_adaptively};
+  res_tensor->SetTensorInfo(tensor_info);
+  res_tensor->SetMetaType(kObjectTypeTensorType);
+  return res_tensor;
 }
 
 KernelTensorPtr CreateKernelTensor(const abstract::AbstractBasePtr &cur_abstract, const TypeId &real_type, size_t idx,
@@ -192,6 +205,34 @@ inline InOutKernelTensors AbstractInOutFromCNode(const CNodePtr &cnode) {
     auto format_str = AnfAlgo::GetOutputFormat(cnode, output_idx);
     auto output_tensor = CreateKernelTensor(cur_abstract, real_output_type, output_idx, device_shape_adaptively,
                                             format_str, is_real_tuple_output);
+    output_tensors.push_back(output_tensor);
+  }
+  return std::make_pair(input_tensors, output_tensors);
+}
+
+inline InOutKernelTensors AbstractInOutFromExecuteKernelInfo(const pynative::ExecuteKernelInfo &execute_kernel_info) {
+  // Makeup input KernelTensors, meta_types can be tensor, scalar, tuple, list.
+  std::vector<KernelTensorPtr> input_tensors;
+  auto inputs_device_address = execute_kernel_info.inputs_device_address_;
+  auto cnode = execute_kernel_info.kernel_;
+  size_t input_num = inputs_device_address.size();
+  for (size_t input_idx = 0; input_idx < input_num; ++input_idx) {
+    auto input_device_address = inputs_device_address[input_idx];
+    auto device_shape_adaptively = AnfAlgo::GetDeviceShapeAdaptively(input_device_address);
+    auto input_tensor = CreateKernelTensorDynamic(input_device_address, device_shape_adaptively);
+    input_tensors.push_back(input_tensor);
+  }
+
+  // Makeup output tensors.
+  std::vector<KernelTensorPtr> output_tensors;
+  auto cur_abstract = cnode->abstract();
+  MS_EXCEPTION_IF_NULL(cur_abstract);
+  auto outputs_device_address = execute_kernel_info.outputs_device_address_;
+  size_t output_num = outputs_device_address.size();
+  for (size_t output_idx = 0; output_idx < output_num; ++output_idx) {
+    auto output_device_address = outputs_device_address[output_idx];
+    auto device_shape_adaptively = AnfAlgo::GetDeviceShapeAdaptively(output_device_address);
+    auto output_tensor = CreateKernelTensorDynamic(output_device_address, device_shape_adaptively);
     output_tensors.push_back(output_tensor);
   }
   return std::make_pair(input_tensors, output_tensors);
@@ -1883,6 +1924,15 @@ KernelArgs AbstractArgsFromCNode(const CNodePtr &cnode, bool is_without_operator
   MS_EXCEPTION_IF_NULL(cnode);
   BaseOperatorPtr base_operator = is_without_operator ? nullptr : CreateOperatorByCNode(cnode);
   auto [input_tensors, output_tensors] = AbstractInOutFromCNode(cnode);
+  KernelArgs args = {base_operator, input_tensors, output_tensors};
+  return args;
+}
+
+KernelArgs AbstractArgsFromExecuteKernelInfo(const pynative::ExecuteKernelInfo &execute_kernel_info,
+                                             bool is_without_operator) {
+  MS_EXCEPTION_IF_NULL(execute_kernel_info.kernel_);
+  BaseOperatorPtr base_operator = is_without_operator ? nullptr : CreateOperatorByCNode(execute_kernel_info.kernel_);
+  auto [input_tensors, output_tensors] = AbstractInOutFromExecuteKernelInfo(execute_kernel_info);
   KernelArgs args = {base_operator, input_tensors, output_tensors};
   return args;
 }

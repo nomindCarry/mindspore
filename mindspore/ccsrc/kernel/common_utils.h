@@ -37,6 +37,7 @@
 #include "kernel/kernel_build_info.h"
 #include "ops/base_operator.h"
 #include "ops/strided_slice.h"
+#include "runtime/pynative/op_compiler.h"
 
 namespace mindspore {
 namespace kernel {
@@ -412,6 +413,8 @@ struct KernelArgs {
   constexpr static char key[] = "KernelArgs";
 };
 BACKEND_EXPORT KernelArgs AbstractArgsFromCNode(const CNodePtr &cnode, bool is_without_operator = false);
+BACKEND_EXPORT KernelArgs AbstractArgsFromExecuteKernelInfo(const pynative::ExecuteKernelInfo &execute_kernel_info,
+                                                            bool is_without_operator = false);
 
 BACKEND_EXPORT KernelAttr GetKernelAttrFromTensors(const std::vector<KernelTensorPtr> &inputs,
                                                    const std::vector<KernelTensorPtr> &outputs);
