@@ -44,7 +44,7 @@ std::mutex PyNativeExecutor::instance_lock_;
 namespace {
 enum class AsyncRunOpArgsEnum : size_t { PY_PRIM = 0, PY_INPUTS, PY_ARGS_NUM };
 template <typename T, typename... Args>
-T PyNativeExecutorTry(const std::function<T(const Args &...)> &method, const Args &... args) {
+T PyNativeExecutorTry(const std::function<T(const Args &...)> &method, const Args &...args) {
   const auto &inst = PyNativeExecutor::GetInstance();
   MS_EXCEPTION_IF_NULL(inst);
   MS_EXCEPTION_IF_NULL(method);
@@ -100,6 +100,15 @@ void PyNativeExecutor::StoreAsyncStatus(const FrontendOpRunInfoPtr &op_run_info)
   op_run_info->async_status.is_ms_function_compiling = forward_executor()->is_ms_function_compiling();
 }
 
+bool IsOneOfCacheBlackLists(const std::string &name) {
+  static const std::set<std::string> kOpCacheBlackList = {
+//    kTensorCopySlicesOpName,  //kGatherOpName,  // kNegOpName,//kTopKOpName,kBroadcastToOpName,
+    kTensorScatterUpdateOpName};             //,kMulOpName,"IsShapeUnKnown"};
+
+  auto iter = kOpCacheBlackList.find(name);
+  return iter != kOpCacheBlackList.end();
+}
+
 py::object PyNativeExecutor::RunOpAsync(const py::args &args) const {
   if (args.size() != static_cast<size_t>(AsyncRunOpArgsEnum::PY_ARGS_NUM)) {
     MS_LOG(EXCEPTION) << "Two args are needed by RunOp";
@@ -116,8 +125,8 @@ py::object PyNativeExecutor::RunOpAsync(const py::args &args) const {
   auto top_type = PredictOutTypeByName(adapter->name());
   // 2. if disable PyTraceAsync, return after infer(half-asynchronous) or run(synchronous mode)
   auto temp = DisablePyTraceAsync(op_run_info);
-//  temp = true;
-  if (temp) {
+  //  temp = true;
+  if (temp || IsOneOfCacheBlackLists(op_run_info->base_op_run_info.op_name)) {
     // Wait for async task finish
     forward_executor()->WaitForwardTask();
     PyNativeAlgo::Common::StubNodeToValue(op_run_info);

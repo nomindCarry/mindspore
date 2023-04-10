@@ -123,6 +123,9 @@ if(NOT MSVC)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
 endif()
 
+string(REPLACE " -Werror " " " CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+string(REPLACE " -fvisibility=hidden" " -fvisibility=default" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+
 include(${CMAKE_SOURCE_DIR}/cmake/init.cmake)
 add_subdirectory(mindspore/core)
 if(ENABLE_D OR ENABLE_ACL OR ENABLE_TESTCASES)

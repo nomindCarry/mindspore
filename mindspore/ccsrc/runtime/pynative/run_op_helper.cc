@@ -874,7 +874,7 @@ void UpdateOutputShapeForCompileInfo(const std::vector<device::DeviceAddressPtr>
 void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info,
                              const session::BackendOpRunInfoPtr &op_run_info,
                              std::vector<device::DeviceAddressPtr> *device_address_list) {
-  MS_LOG(ERROR) << "Start";
+  MS_LOG(DEBUG) << "Start";
   // Get input tensors without const value
   auto input_tensors = GetTensorWithoutValueMask(op_run_info);
   // Update input tensors to op compiler info cache
@@ -910,11 +910,6 @@ void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info
     auto execute_kernel = execute_kernel_list[i];
     const CNodePtr &kernel = execute_kernel.kernel_;
 
-    auto op_name = common::AnfAlgo::GetCNodeName(kernel);
-    auto log = false;
-    if (op_name == "TensorScatterUpdate") {
-      log = true;
-    }
     // Check if need infer shape
     std::vector<tensor::TensorPtr> tensors = GetAllInputTensor(
       execute_kernel.inputs_device_address_, address_map_to_tensor, op_compiler_info->value_map_to_tensor_);
@@ -927,13 +922,6 @@ void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info
 
     // Resize
     ResizeNodeInput(kernel);
-
-    if (log) {
-      MS_LOG(ERROR)<<op_name<<":"<<op_run_info->base_op_run_info.abstract;
-      for (auto temp: execute_kernel.inputs_device_address_) {
-        MS_LOG(ERROR)<<temp->host_shape();
-      }
-    }
 
     // Malloc input tensor memory
     auto inputs = MallocInputMemoryForDeviceAddress(execute_kernel.inputs_device_address_, device_context);
