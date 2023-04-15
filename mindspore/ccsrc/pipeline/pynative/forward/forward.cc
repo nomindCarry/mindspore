@@ -196,7 +196,7 @@ void ForwardExecutor::Init() {
 
 void ForwardExecutor::RunOpForwardAsyncImpl(const FrontendOpRunInfoPtr &op_run_info) {
   MS_EXCEPTION_IF_NULL(op_run_info);
-  MS_LOG(DEBUG) << "RunOp name: " << op_run_info->base_op_run_info.op_name;
+  MS_LOG(ERROR) << "RunOp name: " << op_run_info->base_op_run_info.op_name;
   PyNativeAlgo::Common::StubNodeToValue(op_run_info);
   // 1.Set cast for inputs
   SetCastForInputs(op_run_info);
@@ -207,9 +207,12 @@ void ForwardExecutor::RunOpForwardAsyncImpl(const FrontendOpRunInfoPtr &op_run_i
     UpdateStubNodeAbs(op_run_info);
   }
 
+  MS_LOG(ERROR)<<"test";
   // 3.Run op with selected backend
   if (!op_run_info->output_get_by_infer_value) {
+    MS_LOG(ERROR)<<"test";
     GetOutput(op_run_info);
+    MS_LOG(ERROR)<<"test";
   } else {
     if (op_run_info->stub_output != nullptr) {
       op_run_info->stub_output->SetValue(op_run_info->out_value);
@@ -230,6 +233,7 @@ void ForwardExecutor::RunOpForwardAsyncImpl(const FrontendOpRunInfoPtr &op_run_i
   if (!op_run_info->async_status.is_ms_function_compiling && grad()->custom_bprop_cell_count() <= 0) {
     grad()->ProcessOpGradInfo(op_run_info);
   }
+  MS_LOG(ERROR)<<"finish";
 }
 
 void ForwardExecutor::RunOpForwardAsync(const FrontendOpRunInfoPtr &op_run_info) {

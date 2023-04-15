@@ -1091,7 +1091,7 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
                                      const session::BackendOpRunInfoPtr &op_run_info, VectorRef *outputs) {
   MS_EXCEPTION_IF_NULL(op_run_info);
   MS_EXCEPTION_IF_NULL(op_compiler_info);
-  MS_LOG(DEBUG) << "RunOpImplDynamic " << op_run_info->base_op_run_info.op_name;
+  MS_LOG(DEBUG) << "RunOpImplDynamic " << op_run_info->base_op_run_info.op_name<<":"<<op_run_info->base_op_run_info.abstract;
   // Fetch outputs.
   const auto &graph = op_compiler_info->graph_;
   MS_EXCEPTION_IF_NULL(graph);
@@ -1103,6 +1103,7 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
   auto async_exec_disabled = is_dynamic_shape || !op_run_info->base_op_run_info.lazy_build ||
                              OpInBlackList(op_run_info) || GetExecutionMode() == kGraphMode ||
                              EnablePyNativeSyncRunning();
+  async_exec_disabled = true;
   if (!async_exec_disabled) {
     MS_LOG(DEBUG) << "Async exec enabled, op: " << op_run_info->base_op_run_info.op_name;
     // Create graph output device address
@@ -1169,7 +1170,7 @@ void MindRTBackend::RunOp(const session::BackendOpRunInfoPtr &op_run_info, Vecto
 void MindRTBackend::RunOpDynamic(const session::BackendOpRunInfoPtr &op_run_info, VectorRef *outputs) {
   MS_EXCEPTION_IF_NULL(op_run_info);
   MS_EXCEPTION_IF_NULL(graph_compiler_);
-  MS_LOG(DEBUG) << "Run Op " << op_run_info->base_op_run_info.op_name;
+  MS_LOG(ERROR) << "Run Op " << op_run_info->base_op_run_info.op_name;
   // Get the device context.
   const auto &device_context =
     device::DeviceContextManager::GetInstance().GetOrCreateDeviceContext({device_name_, device_id_});
@@ -1209,7 +1210,7 @@ void MindRTBackend::UpdateOutput(const std::vector<session::KernelWithIndex> &ou
 void MindRTBackend::UpdateOutputDynamic(const OpCompilerInfoPtr &op_compiler_info, VectorRef *const outputs,
                                         const vector<device::DeviceAddressPtr> &device_address_list,
                                         const abstract::AbstractBasePtr &out_abstract) const {
-  MS_LOG(DEBUG) << "UpdateOutputDynamicAsync";
+  MS_LOG(ERROR) << "UpdateOutputDynamic";
   MS_EXCEPTION_IF_NULL(op_compiler_info);
   auto output_nodes = op_compiler_info->graph_output_nodes_;
   auto outputs_size = output_nodes.size();
