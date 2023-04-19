@@ -916,7 +916,7 @@ void LaunchKernelsDynamicNew(const pynative::OpCompilerInfoPtr &op_compiler_info
     if (is_need_infer) {
       InferNodeRealShape(kernel, execute_kernel.inputs_device_address_, tensors);
     } else {
-      kernel->set_abstract(op_run_info->base_op_run_info.abstract->Clone());
+      kernel->set_abstract(op_run_info->base_op_run_info.abstract);
       opt::dynamic_shape::SetOpArgs(kernel, execute_kernel.inputs_device_address_, tensors);
     }
 
