@@ -109,12 +109,20 @@ TuplePtr ApplyAdagradDAInferType(const PrimitivePtr &prim, const std::vector<Abs
   auto global_step_type = input_args[kInputIndex7]->BuildType();
   const std::set<TypePtr> valid_types = {kFloat16, kFloat32};
   // gradient_accumulator、gradient_squared_accumulator、grad must have the same type as var
+
+  MS_LOG(ERROR)<<"checkType";
   std::map<std::string, TypePtr> args;
+  MS_LOG(ERROR)<<"var_type:"<<var_type;
   (void)args.insert(std::make_pair("var_type", var_type));
+  MS_LOG(ERROR)<<"gradient_accumulator_type:"<<gradient_accumulator_type;
   (void)args.insert(std::make_pair("gradient_accumulator_type", gradient_accumulator_type));
+  MS_LOG(ERROR)<<"gradient_squared_accumulator_type:"<<gradient_squared_accumulator_type;
   (void)args.insert(std::make_pair("gradient_squared_accumulator_type", gradient_squared_accumulator_type));
+  MS_LOG(ERROR)<<"grad_type:"<<grad_type;
   (void)args.insert(std::make_pair("grad_type", grad_type));
+  MS_LOG(ERROR)<<"CheckTensorTypeSame";
   (void)CheckAndConvertUtils::CheckTensorTypeSame(args, valid_types, prim_name);
+  MS_LOG(ERROR)<<"checkTypefinish";
   // lr、l1、l2、global_step_type must be a scalar type
   std::map<std::string, TypePtr> args_lr;
   std::map<std::string, TypePtr> args_l1;
