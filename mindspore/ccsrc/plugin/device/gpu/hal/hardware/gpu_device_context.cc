@@ -788,7 +788,14 @@ bool GPUKernelExecutor::DoLaunchKernel(const CNodePtr &kernel, const std::vector
   MS_EXCEPTION_IF_NULL(stream);
   auto kernel_mod = AnfAlgo::GetKernelMod(kernel);
   MS_EXCEPTION_IF_NULL(kernel_mod);
-  return kernel_mod->Launch(inputs, workspace, outputs, stream);
+  auto ret = kernel_mod->Launch(inputs, workspace, outputs, stream);
+  res_manager_->SyncAllStreams();
+  cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) {
+    MS_LOG(ERROR)<<"ERROR";
+    return false;
+  }
+  return ret;
 }
 
 bool GPUDeviceResManager::CreateStream(size_t *stream_id) const {
