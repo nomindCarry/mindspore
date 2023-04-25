@@ -126,7 +126,7 @@ py::object PyNativeExecutor::RunOpAsync(const py::args &args) const {
   // 2. if disable PyTraceAsync, return after infer(half-asynchronous) or run(synchronous mode)
   auto temp = DisablePyTraceAsync(op_run_info);
   //  temp = true;
-  if (temp || IsOneOfCacheBlackLists(op_run_info->base_op_run_info.op_name)) {
+  if (temp){ //|| !IsOneOfCacheBlackLists(op_run_info->base_op_run_info.op_name)) {
     // Wait for async task finish
     forward_executor()->WaitForwardTask();
     PyNativeAlgo::Common::StubNodeToValue(op_run_info);

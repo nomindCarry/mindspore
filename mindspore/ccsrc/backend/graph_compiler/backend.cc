@@ -1103,7 +1103,7 @@ void MindRTBackend::RunOpImplDynamic(bool single_op_cache_hit, const OpCompilerI
   auto async_exec_disabled = is_dynamic_shape || !op_run_info->base_op_run_info.lazy_build ||
                              OpInBlackList(op_run_info) || GetExecutionMode() == kGraphMode ||
                              EnablePyNativeSyncRunning();
-  async_exec_disabled = true;
+//  async_exec_disabled = true;
   if (!async_exec_disabled) {
     MS_LOG(DEBUG) << "Async exec enabled, op: " << op_run_info->base_op_run_info.op_name;
     // Create graph output device address

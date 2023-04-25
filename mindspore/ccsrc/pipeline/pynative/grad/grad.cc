@@ -1795,11 +1795,16 @@ void GradExecutor::DoOpGrad(const FrontendOpRunInfoPtr &op_run_info, const CNode
   }
   // to avoid out exist in tape bprop, avoid out be modified.
   ValuePtrList cloned_op_args;
-  (void)std::transform(op_run_info->input_value.begin(), op_run_info->input_value.end(),
-                       std::back_inserter(cloned_op_args),
-                       [](const ValuePtr &value) { return ShallowCopyTensorValue(value); });
-  ValuePtr cloned_out = ShallowCopyTensorValue(op_out);
-  bool out_is_used = FreeUselessTensors(cnode, cloned_op_args, cloned_out);
+  ValuePtr cloned_out;
+  bool out_is_used;
+  (void) std::transform(op_run_info->input_value.begin(), op_run_info->input_value.end(),
+                        std::back_inserter(cloned_op_args),
+                        [](const ValuePtr &value) { return ShallowCopyTensorValue(value); });
+  cloned_out = ShallowCopyTensorValue(op_out);
+  {
+    py::gil_scoped_acquire acquire;
+    out_is_used = FreeUselessTensors(cnode, cloned_op_args, cloned_out);
+  }
 
   auto grad_param = std::make_shared<autograd::GradParam>(cnode, cloned_op_args, cloned_out, nullptr,
                                                           !top_cell()->is_high_order_top_cell(),
